@@ -1,0 +1,279 @@
+#!/usr/bin/env python
+
+import rospy
+from ros_numpy import msgify, numpify
+from sensor_msgs.msg import PointCloud2
+from tf2_ros import Buffer, TransformListener
+
+import numpy as np
+from numpy.lib.recfunctions import unstructured_to_structured
+from scipy.spatial import cKDTree
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+
+import map_data.map_data as md
+
+
+class OSMCloud:
+    def __init__(self):
+        self.utm_frame = rospy.get_param('~utm_frame', 'utm')
+        self.local_frame = rospy.get_param('~local_frame', 'map')
+        self.utm_to_local = rospy.get_param('~utm_to_local', None)
+        self.mapdata_file = rospy.get_param('~mapdata_file', None)
+        self.gpx_file = rospy.get_param('~gpx_file', None)
+        self.save_mapdata = rospy.get_param('~save_mapdata', False)
+        self.max_path_dist = rospy.get_param('~max_path_dist', 1)
+        self.neighbor_cost = rospy.get_param('~neighbor_cost', 'linear')
+        self.grid_res = rospy.get_param('~grid_res', 0.25)
+        self.grid_max = rospy.get_param('~grid_max', [250, 250])
+        self.grid_min = rospy.get_param('~grid_min', [-250, -250])
+
+        self.pub_grid = rospy.Publisher('grid', PointCloud2, queue_size=1, latch=True)
+
+        self.tf = Buffer()
+        self.tf_sub = TransformListener(self.tf)
+
+        if self.mapdata_file is not None:
+            with open(self.mapdata_file, 'rb') as fh:
+                self.map_data = pickle.load(fh)
+        elif self.gpx_file is not None:
+            self.map_data = md.MapData(self.gpx_file)
+            self.map_data.run_all(self.save_mapdata)
+        else:
+            rospy.logerr('No map data or gpx file provided')
+            exit(1)
+
+        if not self.utm_to_local:
+            self.get_utm_to_local()
+        else:
+            self.utm_to_local = np.array(self.utm_to_local)
+        rospy.loginfo(f'Using UTM to local transform: {self.utm_to_local}')
+
+        self.grid_cloud = self.get_cloud()
+        self.pub_timer = rospy.Timer(rospy.Duration(10), self.publish_cb)
+        rospy.loginfo('Initialized OSM cloud')
+
+    def publish_cb(self, event):
+        '''
+        Timer callback to publish the grid cloud.
+        '''
+        self.grid_cloud.header.stamp = rospy.Time.now()
+        self.pub_grid.publish(self.grid_cloud)
+        rospy.loginfo('Published grid cloud')
+
+    def get_utm_to_local(self):
+        '''
+        While rospy is not shutdown, try to get the UTM to local transform every second or until successful.
+        '''
+        while not rospy.is_shutdown():
+            try:
+                utm_to_local = self.tf.lookup_transform(self.local_frame, self.utm_frame, rospy.Time(0), rospy.Duration(60))
+                self.utm_to_local = numpify(utm_to_local.transform)
+                rospy.loginfo(f'Got UTM to local transform: {self.utm_to_local}')
+                break
+            except Exception as e:
+                rospy.logwarn(f'Failed to get UTM to local transform: {e}')
+                rospy.sleep(1)
+
+    def get_cloud(self):
+        '''
+        Return a point cloud from the map data.
+
+        Returns:
+        --------
+        cloud : sensor_msgs.PointCloud2
+            Created point cloud.
+        '''
+        points = transform_points(self.map_data.get_points(), self.utm_to_local, 0)
+        grid = np.pad(create_grid(self.grid_min, self.grid_max, self.grid_res), ((0, 0), (0, 1)))
+        waypoints = np.pad(split_ways(points, self.map_data.get_ways(), self.grid_res), ((0, 0), (0, 1)))
+
+        grid = points_near_ref(grid, waypoints, self.max_path_dist)
+        if self.neighbor_cost == 'linear':
+            pass
+        elif self.neighbor_cost == 'quadratic':
+            grid[:, 3] = grid[:, 3] ** 2
+        elif self.neighbor_cost == 'zero':
+            grid[:, 3] = 0
+        else:
+            rospy.logwarn(f'Unknown neighbor cost: {self.neighbor_cost}')
+
+        grid[:, 3] /= self.max_path_dist ** 2 if self.neighbor_cost == 'quadratic' else 1
+        cloud = create_cloud(grid)
+        cloud.header.frame_id = self.local_frame
+        cloud.header.stamp = rospy.Time.now()
+
+        return cloud
+
+
+def create_grid(low, high, cell_size=0.25):
+    '''
+    Create a grid of points.
+
+    Parameters:
+    -----------
+    low : tuple
+        Lower bounds of the grid.
+    high : tuple
+        Upper bounds of the grid.
+    cell_size : float
+        Size of the cell.
+
+    Returns:
+    --------
+    grid : np.array
+        Grid of points.
+    '''
+    xs = np.linspace(low[0], high[0], np.ceil((high[0] - low[0]) / cell_size))
+    ys = np.linspace(low[1], high[1], np.ceil((high[1] - low[1]) / cell_size))
+    grid = np.stack(np.meshgrid(xs, ys), axis=-1).reshape(-1, 2)
+    return grid
+
+def create_cloud(points):
+    '''
+    Create a point cloud from points.
+
+    Parameters:
+    -----------
+    points : np.array
+        Points in a grid to create the cloud from.
+    '''
+    if not isinstance(points, np.ndarray):
+        points = np.array(points)
+    assert points.ndim == 2
+    assert points.shape[1] == 4
+
+    points = points.astype(np.float32)
+    print(points.shape)
+    cloud = msgify(PointCloud2, unstructured_to_structured(points, names=['x', 'y', 'z', 'cost']))
+    return cloud
+
+def points_near_ref(points, reference, max_dist=1):
+    '''
+    Get points near reference points and set linear distance as cost.
+
+    Parameters:
+    -----------
+    points : np.array
+        Points to check.
+    reference : np.array
+        Reference points.
+    max_dist : float
+        Maximum distance to check.
+
+    Returns:
+    --------
+    points : np.array
+        All points with a cost based on distance to reference points.
+    '''
+    if not isinstance(points, np.ndarray):
+        points = np.array(points)
+    if not isinstance(reference, np.ndarray):
+        reference = np.array(reference)
+
+    tree = cKDTree(reference, compact_nodes=False, balanced_tree=False)
+    dists, _ = np.array(tree.query(points, distance_upper_bound=max_dist))
+    points = points[dists < max_dist]
+    dists = dists[dists < max_dist]
+    points = np.hstack([points, (dists / max_dist).reshape(-1, 1)])
+    return points
+
+def transform_points(points, transform, z=None):
+    '''
+    Transform points.
+
+    Parameters:
+    -----------
+    points : dict
+        Points to transform.
+    transform : np.array
+        Transformation matrix.
+    z : float
+        Z value to set.
+
+    Returns:
+    --------
+    transformed : dict
+        Dictionary id: transformed point.
+    '''
+    def transform_point(point, transform):
+        '''
+        Transform a point with a transformation matrix.
+
+        Parameters:
+        -----------
+        point : np.array
+            Point to transform.
+        transform : np.array
+            Transformation matrix.
+
+        Returns:
+        --------
+        point : np.array
+            Transformed point.
+        '''
+        assert isinstance(point, np.ndarray)
+        assert isinstance(transform, np.ndarray)
+
+        point = np.dot(transform[:3, :3], point) + transform[:3, 3:]
+        return point
+
+    transformed = {}
+    for id, point in points.items():
+        transformed[id] = transform_point(point, transform)
+        if z is not None:
+            transformed[id][2] = z
+    return transformed
+
+def split_ways(points, ways, max_dist=0.25):
+    '''
+    Equidistantly split ways into points with a maximal step size. Also only use footways from map data,
+    as we are not allowed to leave the footways.
+
+    Parameters:
+    -----------
+    points : dict
+        Points to split ways on.
+    ways : dict
+        Ways to split.
+    max_dist : float
+        Maximal step size.
+
+    Returns:
+    --------
+    waypoints : np.array
+        Waypoints created from the ways.
+    '''
+    waypoints = []
+    for way in ways["footways"]:
+        for i, (n0, n1) in enumerate(zip(way.nodes, way.nodes[1:])):
+            point0 = points[n0.id].ravel()[:2]
+            point1 = points[n1.id].ravel()[:2]
+
+            if i == 0:
+                waypoints.append(point0)
+
+            dist = np.linalg.norm(point1 - point0)
+
+            if dist <= 1e-3:
+                waypoints.append(point1)
+                continue
+
+            vec = (point1 - point0) / dist
+            num = int(np.ceil(dist / max_dist))
+            step = dist / num
+            for j in range(num):
+                waypoints.append(point0 + (j + 1) * step * vec)
+
+    return np.array(waypoints)
+
+
+def main():
+    rospy.init_node('osm_cloud')
+    osm_cloud = OSMCloud()
+    rospy.spin()
+
+if __name__ == '__main__':
+    main()
