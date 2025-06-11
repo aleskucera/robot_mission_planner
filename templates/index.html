@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VRAS Mission Planner</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h1>Robot Mission Planner</h1>
+
+    <div id="map"></div>
+
+    <div class="controls-container">
+        <div class="point-controls">
+            <button class="point-btn start-btn" id="start-btn" data-type="start">
+                <span class="btn-icon">📍</span>
+                <span class="btn-text">Start Point</span>
+            </button>
+            <button class="point-btn goal-btn" id="goal-btn" data-type="goal">
+                <span class="btn-icon">🎯</span>
+                <span class="btn-text">End Point</span>
+            </button>
+            <button class="point-btn intermediate-btn" id="intermediate-btn" data-type="intermediate">
+                <span class="btn-icon">📌</span>
+                <span class="btn-text">Add Stop</span>
+            </button>
+        </div>
+
+        <div class="action-controls">
+            <button class="action-btn solve-btn" id="solve-btn">
+                <span class="btn-icon">🚀</span>
+                <span class="btn-text">Calculate</span>
+            </button>
+            <button class="action-btn clear-btn" id="clear-btn">
+                <span class="btn-icon">🗑️</span>
+                <span class="btn-text">Clear All</span>
+            </button>
+            <button id="export-btn" class="action-btn" disabled>
+                <span class="btn-icon">💾</span>
+                <span class="btn-text">Export GPX</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <div class="point-counter">
+            <span id="point-count">Ready to add points</span>
+        </div>
+        <div id="status"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
