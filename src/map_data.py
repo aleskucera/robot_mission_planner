@@ -39,7 +39,7 @@ except ImportError:
 
 from gpxpy import parse as gpxparse
 
-from map_data.way import Way
+from way import Way
 
 
 OBSTACLE_RADIUS = 2 # meters, radius of the circle around the obstacle
@@ -91,6 +91,8 @@ class MapData:
             self.waypoints = np.array(coords[0])
             self.zone_number = coords[1]
             self.zone_letter = coords[2]
+        elif coords_type == "planner":
+            self.waypoints, self.zone_number, self.zone_letter = self.waypoints_to_utm(np.array(coords))
         else:
             rospy.logerr("Unknown coords_type.")
             return
@@ -120,11 +122,11 @@ class MapData:
         self.points = list(map(geometry.Point, zip(self.waypoints[:,0], self.waypoints[:,1])))
 
         self.points_information = []
-        self.way_node_ids = set() 
+        self.way_node_ids = set()
 
         self.osm_ways_data = None
         self.osm_rels_data = None
-        self.osm_nodes_data = None       
+        self.osm_nodes_data = None
 
         self.roads = set()
         self.footways = set()
@@ -136,7 +138,7 @@ class MapData:
 
         self.ways = dict()
 
-        self._path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        self._path = os.path.dirname(os.path.dirname(__file__))
         self.BARRIER_TAGS = self.csv_to_dict(os.path.join(self._path, 'parameters/barrier_tags.csv'))
         self.NOT_BARRIER_TAGS = self.csv_to_dict(os.path.join(self._path, 'parameters/not_barrier_tags.csv'))
         self.ANTI_BARRIER_TAGS = self.csv_to_dict(os.path.join(self._path, 'parameters/anti_barrier_tags.csv'))
@@ -625,10 +627,10 @@ if __name__ == "__main__":
     args = parse_args()
 
     if args.d:
-        map_data = MapData(os.path.join(os.path.dirname(__file__), "../../data", args.f), coords_type="file")
+        map_data = MapData(os.path.join(os.path.dirname(__file__), "../data", args.f), coords_type="file")
         map_data.run_queries()
     else:
-        with open(os.path.join(os.path.dirname(__file__), "../../data", args.f[:-4]+'.mapdata'), "rb") as fh:
+        with open(os.path.join(os.path.dirname(__file__), "../data", args.f[:-4]+'.mapdata'), "rb") as fh:
             map_data = pickle.load(fh)
 
     if map_data.run_parse():

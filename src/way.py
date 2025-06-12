@@ -2,7 +2,7 @@ import numpy as np
 from shapely.geometry import Point, MultiPoint, LineString
 from shapely.prepared import prep
 
-from map_data.points_to_graph_points import get_point_line
+from points_to_graph_points import get_point_line
 
 
 # living_street, pedestrian, track, crossing can be accessed by cars
@@ -19,7 +19,7 @@ class Way():
         self.in_out = in_out
 
         self.pcd_points = None
-    
+
     def is_road(self):
         '''
         Check if the way is a road.
@@ -43,7 +43,7 @@ class Way():
         '''
         if self.tags.get('highway', None) and self.tags.get('highway', None) in FOOTWAY_VALUES:
             return True
-        
+
     def is_barrier(self, yes_tags, not_tags, anti_tags):
         '''
         Check if the way is a barrier.
@@ -83,7 +83,7 @@ class Way():
             Point cloud of the way.
         '''
         # https://stackoverflow.com/questions/44399749/get-all-lattice-points-lying-inside-a-shapely-polygon
-        
+
         if self.pcd_points is None:
             if filled:
                 xmin, ymin, xmax, ymax = self.line.bounds
@@ -93,14 +93,14 @@ class Way():
                 xv = xv.ravel()
                 yv = yv.ravel()
                 points = MultiPoint(np.array([xv,yv]).T).geoms
-        
+
                 points = self.mask_points(points,self.line)
                 self.pcd_points = list(points)
                 self.pcd_points = np.array(list(LineString(self.pcd_points).xy)).T
             else:
                 points = self.line.exterior.coords
                 pcd_points = np.array([]).reshape((0,2))
-                
+
                 for i in range(len(points)):
                     if i+1 <= len(points)-1:
                         p1 = Point(points[i])
@@ -112,9 +112,9 @@ class Way():
                     _, line, _ = get_point_line(p1,p2,0.5)
                     pcd_points = np.concatenate([pcd_points,line])
                 self.pcd_points = pcd_points
-        
+
         return self.pcd_points
-    
+
     def mask_points(self, points, polygon):
         '''
         Mask points with a polygon.
