@@ -9,12 +9,14 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 
 from nav2_msgs.action import FollowGPSWaypoints
-from geometry_msgs.msg import GeoPose
+from geographic_msgs.msg import GeoPose
 
 class GPXFollower(Node):
-    def __init__(self):
+    def __init__(self, gpx_file):
         super().__init__('gpx_follower')
         self._action_client = ActionClient(self, FollowGPSWaypoints, 'follow_gps_waypoints')
+        self.gpx_file = gpx_file
+        self.parse_gpx_file()
 
         # Wait for the action server to be available
         while not self._action_client.wait_for_server(timeout_sec=1.0):
@@ -22,10 +24,10 @@ class GPXFollower(Node):
 
         self.get_logger().info('GPXFollower node initialized.')
 
-    def parse_gpx_file(self, gpx_file):
+    def parse_gpx_file(self):
         waypoints = []
         try:
-            with open(gpx_file, 'r') as file:
+            with open(self.gpx_file, 'r') as file:
                 gpx = gpxpy.parse(file)
                 for waypoint in gpx.waypoints:
                     geo_pose = GeoPose()
@@ -36,19 +38,19 @@ class GPXFollower(Node):
         except Exception as e:
             self.get_logger().error(f'Error parsing GPX file: {e}')
             return []
-        return waypoints
+        self.waypoints = waypoints
+        self.get_logger().info(f'Parsed {len(self.waypoints)} waypoints from GPX file.')
 
-    def send_path(self, gpx_file):
-        waypoints = self.parse_gpx_file(gpx_file)
-        if not waypoints:
+    def send_path(self):
+        if not self.waypoints:
             self.get_logger().error('No waypoints found in GPX file.')
             return
-        self.get_logger().info(f'Parsed {len(waypoints)} waypoints from GPX file.')
+        self.get_logger().info(f'Parsed {len(self.waypoints)} waypoints from GPX file.')
 
         waypoint_msg = FollowGPSWaypoints.Goal()
-        waypoint_msg.waypoints = waypoints
+        waypoint_msg.waypoints = self.waypoints
 
-        self.get_logger().info(f"Sending {len(waypoints)} waypoints to FollowGPSWaypoints")
+        self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to FollowGPSWaypoints")
         send_goal_future = self.action_client.send_goal_async(
             goal_msg,
             feedback_callback=self.feedback_callback
@@ -86,6 +88,8 @@ def main(args=None):
         return
 
     gpx_file_path = sys.argv[1]
+    gpx_file_path = os.path.join(os.path.dirname(__file__), "../../", gpx_file_path)
+    print(gpx_file_path)
     if not os.path.exists(gpx_file_path):
         print(f"GPX file {gpx_file_path} does not exist")
         rclpy.shutdown()

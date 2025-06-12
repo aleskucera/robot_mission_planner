@@ -15,10 +15,6 @@ find_package(tf2_ros REQUIRED)
 nav2_package()
 set(CMAKE_CXX_STANDARD 17)
 
-include_directories(
-  include
-)
-
 set(dependencies
   rclpy
   nav2_common
@@ -34,20 +30,14 @@ set(dependencies
 
 set(library_name robot_mission_planner)
 
-install(TARGETS ${library_name}
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
-)
+add_executable(gpx_follower scripts/gpx_follower.py)
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  set(ament_cmake_copyright_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
-  add_subdirectory(test)
-endif()
+# install(TARGETS ${library_name}
+#   ARCHIVE DESTINATION lib
+#   LIBRARY DESTINATION lib
+#   RUNTIME DESTINATION bin
+# )
 
-ament_export_include_directories(include)
 ament_export_libraries(${library_name})
 ament_export_dependencies(${dependencies})
 
