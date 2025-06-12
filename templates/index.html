@@ -37,10 +37,22 @@
                 <span class="btn-icon">🗑️</span>
                 <span class="btn-text">Clear All</span>
             </button>
-            <button id="export-btn" class="action-btn" disabled>
-                <span class="btn-icon">💾</span>
-                <span class="btn-text">Export GPX</span>
-            </button>
+            <div class="export-dropdown">
+                <button id="export-btn" class="action-btn" disabled>
+                    <span class="btn-icon">💾</span>
+                    <span class="btn-text">Export</span>
+                </button>
+                <div class="export-options">
+                    <button id="export-gpx-btn" class="export-option">
+                        <span class="option-icon">📎</span>
+                        <span class="option-text">Download GPX</span>
+                    </button>
+                    <button id="export-wormhole-btn" class="export-option">
+                        <span class="option-icon">🌀</span>
+                        <span class="option-text">Share via Wormhole</span>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 

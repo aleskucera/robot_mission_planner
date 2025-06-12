@@ -7,8 +7,9 @@ class PathSolverApp {
         this.currentMode = null;
         this.pointCounts = { start: 0, goal: 0, intermediate: 0 };
         this.isDragging = false;
-        this.lastDragEndTime = 0; // Track time of last drag end
-        this.pathCoords = []; // Initialize path coordinates for export
+        this.lastDragEndTime = 0;
+        this.pathCoords = [];
+        this.activeTransferId = null;
 
         this.init();
     }
@@ -17,7 +18,7 @@ class PathSolverApp {
         this.initializeMap();
         this.bindEventListeners();
         this.updateUI();
-        document.getElementById('export-btn').disabled = true; // Initially disable export button
+        document.getElementById('export-btn').disabled = true;
     }
 
     initializeMap() {
@@ -78,8 +79,21 @@ class PathSolverApp {
 
         document.getElementById('solve-btn').addEventListener('click', () => this.solvePath());
         document.getElementById('clear-btn').addEventListener('click', () => this.clearPoints());
-        document.getElementById('export-btn').addEventListener('click', () => this.exportPathToGPX());
+
+        document.getElementById('export-gpx-btn').addEventListener('click', () => this.exportPathToGPX());
+        document.getElementById('export-wormhole-btn').addEventListener('click', () => this.sharePathViaWormhole());
+
+        const exportBtn = document.getElementById('export-btn');
+        exportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelector('.export-options').classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            document.querySelector('.export-options').classList.remove('show');
+        });
     }
+
 
     selectPointMode(mode) {
         document.querySelectorAll('.point-btn').forEach(btn => btn.classList.remove('active'));
@@ -455,17 +469,12 @@ class PathSolverApp {
 
     generateGPX() {
         const trackPoints = this.pathCoords.map(coord =>
-            `<trkpt lat="${coord[0]}" lon="${coord[1]}"></trkpt>`
+            `<wpt lat="${coord[0]}" lon="${coord[1]}"></wpt>`
         ).join('\n');
 
         return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="PathSolverApp">
-    <trk>
-        <name>Computed Path</name>
-        <trkseg>
-            ${trackPoints}
-        </trkseg>
-    </trk>
+${trackPoints}
 </gpx>`;
     }
 
@@ -479,6 +488,270 @@ class PathSolverApp {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+
+    async sharePathViaWormhole() {
+        if (!this.pathCoords || this.pathCoords.length === 0) {
+            this.showStatus('No path to share', 'error');
+            return;
+        }
+
+        const { overlay, updateMessage, close } = this.showProgressDialog(
+            'Creating Wormhole',
+            'Generating wormhole code...'
+        );
+
+        try {
+            const gpxData = this.generateGPX();
+
+            // 15-second timeout for code capture
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Failed to capture wormhole code')), 15000);
+            });
+
+            updateMessage('Sending path data to server...');
+            const fetchPromise = fetch('/create_wormhole', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gpx: gpxData })
+            }).then(response => {
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                return response.json();
+            });
+
+            const data = await Promise.race([fetchPromise, timeoutPromise]);
+
+            if (data.success) {
+                this.activeTransferId = data.transfer_id;
+                const command = `wormhole receive ${data.code}`;
+                close();
+                this.showWormholeDialog(data.code, command);
+                this.showStatus('Wormhole code generated', 'success');
+            } else {
+                close();
+                console.error('Wormhole creation failed:', data);
+                this.showErrorDialog(
+                    'Wormhole Creation Failed',
+                    data.message || 'Failed to create wormhole',
+                    data.details ? JSON.stringify(data.details, null, 2) : 'No additional details available'
+                );
+                this.showStatus('Failed to share path via wormhole', 'error');
+            }
+        } catch (error) {
+            close();
+            console.error('Error sharing path via wormhole:', error);
+            this.showErrorDialog(
+                'Wormhole Creation Error',
+                error.message,
+                'Check server logs for more details.'
+            );
+            this.showStatus('Error sharing path via wormhole', 'error');
+        }
+    }
+
+    showProgressDialog(title, message) {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dialog progress-dialog';
+
+        const titleEl = document.createElement('h3');
+        titleEl.textContent = title;
+
+        const messageEl = document.createElement('p');
+        messageEl.textContent = message;
+
+        const progressContainer = document.createElement('div');
+        progressContainer.className = 'progress-container';
+
+        const progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        progressContainer.appendChild(progressBar);
+
+        const statusEl = document.createElement('p');
+        statusEl.className = 'status-text';
+        statusEl.textContent = 'Starting...';
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'close-dialog-btn cancel-btn';
+        cancelButton.textContent = 'Cancel';
+
+        dialog.appendChild(titleEl);
+        dialog.appendChild(messageEl);
+        dialog.appendChild(progressContainer);
+        dialog.appendChild(statusEl);
+        dialog.appendChild(cancelButton);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        let dots = 0;
+        let progress = 0;
+        const updateInterval = setInterval(() => {
+            dots = (dots + 1) % 4;
+            progress = Math.min(100, progress + 5);
+            progressBar.style.width = `${progress}%`;
+            statusEl.textContent = `Processing${'.'.repeat(dots).padEnd(3)}`;
+        }, 500);
+
+        const updateMessage = (newMessage) => {
+            messageEl.textContent = newMessage;
+        };
+
+        const close = () => {
+            clearInterval(updateInterval);
+            if (document.body.contains(overlay)) {
+                document.body.removeChild(overlay);
+            }
+        };
+
+        cancelButton.addEventListener('click', () => {
+            close();
+            if (this.activeTransferId) {
+                this.cancelWormholeTransfer(this.activeTransferId);
+                this.activeTransferId = null;
+            }
+            this.showStatus('Wormhole creation cancelled', 'info');
+        });
+
+        return { overlay, updateMessage, close };
+    }
+
+    async cancelWormholeTransfer(transferId) {
+        try {
+            const response = await fetch('/cancel_wormhole', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transfer_id: transferId })
+            });
+            const data = await response.json();
+            if (data.success) {
+                this.showStatus('Wormhole transfer cancelled', 'success');
+            } else {
+                console.error('Failed to cancel wormhole transfer:', data);
+                this.showStatus('Failed to cancel wormhole transfer', 'error');
+            }
+        } catch (error) {
+            console.error('Error cancelling wormhole transfer:', error);
+            this.showStatus('Error cancelling wormhole transfer', 'error');
+        }
+    }
+
+    showWormholeDialog(code, command) {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dialog wormhole-dialog';
+
+        const title = document.createElement('h3');
+        title.textContent = 'Share Path';
+
+        const codeEl = document.createElement('p');
+        codeEl.textContent = code;
+        codeEl.className = 'wormhole-code';
+
+        const instructions = document.createElement('p');
+        instructions.textContent = 'Run this command on another computer to download the path:';
+
+        const commandBox = document.createElement('div');
+        commandBox.className = 'command-box';
+        commandBox.textContent = command;
+
+        const copyButton = document.createElement('button');
+        copyButton.className = 'copy-command-btn';
+        copyButton.textContent = 'Copy Command';
+        copyButton.addEventListener('click', () => {
+            navigator.clipboard.writeText(command)
+                .then(() => {
+                    copyButton.textContent = 'Copied!';
+                    setTimeout(() => copyButton.textContent = 'Copy Command', 2000);
+                    this.showStatus('Command copied to clipboard', 'success');
+                })
+                .catch(err => {
+                    console.error('Failed to copy command:', err);
+                    this.showStatus('Failed to copy command', 'error');
+                });
+        });
+
+        const note = document.createElement('p');
+        note.className = 'note';
+        note.textContent = 'The transfer is active for up to 60 seconds or until completed.';
+
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'close-dialog-btn cancel-btn';
+        cancelButton.textContent = 'Cancel Transfer';
+        cancelButton.addEventListener('click', () => {
+            if (this.activeTransferId) {
+                this.cancelWormholeTransfer(this.activeTransferId);
+                this.activeTransferId = null;
+            }
+            document.body.removeChild(overlay);
+        });
+
+        const closeButton = document.createElement('button');
+        closeButton.className = 'close-dialog-btn';
+        closeButton.textContent = 'Close';
+        closeButton.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        dialog.appendChild(title);
+        dialog.appendChild(codeEl);
+        dialog.appendChild(instructions);
+        dialog.appendChild(commandBox);
+        dialog.appendChild(copyButton);
+        dialog.appendChild(note);
+        dialog.appendChild(cancelButton);
+        dialog.appendChild(closeButton);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+    }
+
+    showErrorDialog(title, message, details) {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'dialog error-dialog';
+
+        const titleEl = document.createElement('h3');
+        titleEl.textContent = title;
+
+        const messageEl = document.createElement('p');
+        messageEl.textContent = message;
+
+        const detailsContainer = document.createElement('div');
+        detailsContainer.className = 'error-details';
+
+        const detailsTitle = document.createElement('p');
+        detailsTitle.className = 'details-title';
+        detailsTitle.textContent = 'Technical Details:';
+
+        const detailsContent = document.createElement('pre');
+        detailsContent.className = 'details-content';
+        detailsContent.textContent = details;
+
+        detailsContainer.appendChild(detailsTitle);
+        detailsContainer.appendChild(detailsContent);
+
+        const closeButton = document.createElement('button');
+        closeButton.className = 'close-dialog-btn';
+        closeButton.textContent = 'Close';
+        closeButton.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        dialog.appendChild(titleEl);
+        dialog.appendChild(messageEl);
+        dialog.appendChild(detailsContainer);
+        dialog.appendChild(closeButton);
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
     }
 
     async clearPoints() {
@@ -567,3 +840,4 @@ let app;
 document.addEventListener('DOMContentLoaded', () => {
     app = new PathSolverApp();
 });
+
