@@ -39,20 +39,20 @@ class GPXFollower(Node):
             self.get_logger().error(f'Error parsing GPX file: {e}')
             return []
         self.waypoints = waypoints
+        if not self.waypoints:
+            self.get_logger().error('No waypoints found in GPX file.')
         self.get_logger().info(f'Parsed {len(self.waypoints)} waypoints from GPX file.')
 
     def send_path(self):
         if not self.waypoints:
-            self.get_logger().error('No waypoints found in GPX file.')
             return
-        self.get_logger().info(f'Parsed {len(self.waypoints)} waypoints from GPX file.')
 
         waypoint_msg = FollowGPSWaypoints.Goal()
-        waypoint_msg.waypoints = self.waypoints
+        waypoint_msg.gps_poses = self.waypoints
 
         self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to FollowGPSWaypoints")
-        send_goal_future = self.action_client.send_goal_async(
-            goal_msg,
+        send_goal_future = self._action_client.send_goal_async(
+            waypoint_msg,
             feedback_callback=self.feedback_callback
         )
         send_goal_future.add_done_callback(self.goal_response_callback)
@@ -97,7 +97,7 @@ def main(args=None):
 
     node = GPXFollower(gpx_file_path)
     try:
-        node.send_goal()
+        node.send_path()
         rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("Node interrupted by user")
