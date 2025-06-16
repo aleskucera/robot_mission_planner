@@ -22,12 +22,15 @@ class GPXFollower(Node):
             self._action_client = ActionClient(self, FollowGPSWaypoints, 'follow_gps_waypoints')
         else:
             self._action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
+
         self.gpx_file = gpx_file
         self.parse_gpx_file()
 
         # Wait for the action server to be available
         while not self._action_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().info('Waiting for /follow_gps_waypoints action server...')
+            self.get_logger().info(f'Waiting for {"/follow_gps_waypoints" if self.args.use_gps \
+                                    else "/follow_waypoints"} action server...')
+        self.goal_handle = None
 
         self.get_logger().info('GPXFollower node initialized.')
 
@@ -133,7 +136,7 @@ def main(args=None):
         print(f"GPX file {gpx_file_path} does not exist")
         return
 
-    rclpy.init(args=args)
+    rclpy.init()
     node = GPXFollower(gpx_file_path, args)
     try:
         node.send_path()
@@ -143,7 +146,6 @@ def main(args=None):
     finally:
         node.cancel_goal()
         node.destroy_node()
-        rclpy.shutdown()
 
 
 if __name__ == '__main__':
