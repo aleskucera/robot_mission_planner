@@ -2,144 +2,180 @@ import os
 import pickle
 
 import numpy as np
+import shapely.geometry as sg
 from shapely.geometry import Point, LineString
 
-from map_data import MapData, CoordsData
+from map_data import MapData
+from rrt_star import RRTStar
 
-def replan_path(path, grid):
-    return NotImplementedError
 
-def replan_rrt(path, obstacles, grid):
-    return NotImpementedError
+class ReplanPath():
+    def __init__(self, args):
+        self.args = args
 
-def create_grid(low, high, cell_size=0.25):
-    '''
-    Create a grid of points.
+        self.grid = self._create_gird(low, high, args.cell_size)
 
-    Parameters:
-    -----------
-    low : tuple
-        Lower bounds of the grid.
-    high : tuple
-        Upper bounds of the grid.
-    cell_size : float
-        Size of the cell.
+    def replan_rrt(self, path, obstacles, grid):
+        new_path = []
+        for i in range(len(path) - 1):
+            new_path.append(path[i])
+            start = path[i]
+            goal = path[i + 1]
+            path_seg = LineString([start[:2], goal[:2]])
+            if self._colides(path_seg, obstacles):
+                way = rrt(start[:2], goal[:2], obstacles, grid)
+                new_path.extend(way[1:-1])
+                break
 
-    Returns:
-    --------
-    grid : np.array
-        Grid of points.
-    '''
-    xs = np.linspace(low[0], high[0], np.ceil((high[0] - low[0]) / cell_size).astype(int))
-    ys = np.linspace(low[1], high[1], np.ceil((high[1] - low[1]) / cell_size).astype(int))
-    grid = np.pad(np.stack(np.meshgrid(xs, ys), axis=-1).reshape(-1, 2), ((0, 0), (0, 1)))
-    return grid
+        new_path.append(path[-1])
+        return new_path
 
-def fill_grid(grid, map_data, cell_size=0.25):
-    obstacle_grid = np.zeros_like(grid, dtype=bool)
-    path_grid = np.zeros_like(grid)
+    def rrt(self, start, goal, obstacles, grid):
+        rrt_star = RRTStar(start, goal, obstacles, grid)
+        path = rrt_star.find_path()
+        if path is not None and self.args.simplify_path:
+            path = self._simplify_path(path, obstacles)
 
-    # for i in range(grid.shape[0]):
-    #     for obstacle in map_data.barriers_list:
-    #         if obstacle.line.contains(Point(grid[i][:2])):
-    #             obstacle_grid[i] = True
-    #             break
+        return path
 
-    paths = np.pad(split_ways(points, map_data.footways_list, cell_size))
-    max_path_dist = 1
-    neighbor_cost = 'quadratic'
-    tmp, mask = points_near_ref(grid, paths, max_path_dist)
-    if neighbor_cost == 'linear':
-        pass
-    elif neighbor_cost == 'quadratic':
-        tmp[:, 3] = path_grid[:, 3] ** 2
-    elif neighbor_cost == 'zero':
-        tmp[:, 3] = 0
-    else:
-        print(f'Unknown neighbor cost: {neighbor_cost}')
-    tmp[:, 3] /= max_path_dist ** 2 if neighbor_cost == 'quadratic' else 1
-    path_grid[mask] = tmp[:, 3]
+    def _simplify_path(self, path, obstacles):
+        new_path = [path[0]]
+        idx = 1
+        while new_path[-1] != path[-1]:
+            start = new_path[-1]
+            for goal in path[idx]:
+                path_seg = LineString([start[:2], goal[:2]])
+                if not self._colides(path_seg, obstacles):
+                    start = goal
+                    idx += 1
+                    if start == path[-1]:
+                        new_path.append(start)
+                        break
+                else:
+                    new_path.append(start)
+                    break
 
-    grid = path_grid.copy()
-    grid[obstacle_grid] = np.inf
+    def _colides(self, path_seg, obstacles):
+        for obstacle in obstacles:
+            if sg.intersects(path_seg, obstacle):
+                return True
+        return False
 
-    return grid
+    def _create_grid(low, high, cell_size=0.25):
+        '''
+        Create a grid of points.
 
-def points_near_ref(points, reference, max_dist=1):
-    '''
-    Get points near reference points and set linear distance as cost.
+        Parameters:
+        -----------
+        low : tuple
+            Lower bounds of the grid.
+        high : tuple
+            Upper bounds of the grid.
+        cell_size : float
+            Size of the cell.
 
-    Parameters:
-    -----------
-    points : np.array
-        Points to check.
-    reference : np.array
-        Reference points.
-    max_dist : float
-        Maximum distance to check.
+        Returns:
+        --------
+        grid : np.array
+            Grid of points.
+        '''
+        xs = np.linspace(low[0], high[0], np.ceil((high[0] - low[0]) / cell_size).astype(int))
+        ys = np.linspace(low[1], high[1], np.ceil((high[1] - low[1]) / cell_size).astype(int))
+        grid = np.pad(np.stack(np.meshgrid(xs, ys), axis=-1).reshape(-1, 2), ((0, 0), (0, 1)))
+        return grid
 
-    Returns:
-    --------
-    points : np.array
-        All points with a cost based on distance to reference points.
-    '''
-    if not isinstance(points, np.ndarray):
-        points = np.array(points)
-    if not isinstance(reference, np.ndarray):
-        reference = np.array(reference)
+    def fill_grid(grid, map_data, cell_size=0.25):
+        path_grid = np.zeros_like(grid)
 
-    tree = cKDTree(reference, compact_nodes=False, balanced_tree=False)
-    dists, _ = np.array(tree.query(points, distance_upper_bound=max_dist))
-    mask = dists < max_dist
-    points = points[mask]
-    dists = dists[mask]
-    points = np.hstack([points, (dists / max_dist).reshape(-1, 1)])
-    return points, mask
+        paths = np.pad(self._split_ways(points, map_data.footways_list, cell_size))
+        max_path_dist = 1
+        neighbor_cost = 'quadratic'
+        tmp, mask = self._points_near_ref(grid, paths, max_path_dist)
+        if neighbor_cost == 'linear':
+            pass
+        elif neighbor_cost == 'quadratic':
+            tmp[:, 3] = path_grid[:, 3] ** 2
+        elif neighbor_cost == 'zero':
+            tmp[:, 3] = 0
+        else:
+            print(f'Unknown neighbor cost: {neighbor_cost}')
+        tmp[:, 3] /= max_path_dist ** 2 if neighbor_cost == 'quadratic' else 1
+        path_grid[mask] = tmp[:, 3]
 
-def split_ways(points, ways, max_dist=0.25):
-    '''
-    Equidistantly split ways into points with a maximal step size. Also only use footways from map data,
-    as we are not allowed to leave the footways.
+        return path_grid.copy()
 
-    Parameters:
-    -----------
-    points : dict
-        Points to split ways on.
-    ways : dict
-        Ways to split.
-    max_dist : float
-        Maximal step size.
+    def _points_near_ref(points, reference, max_dist=1):
+        '''
+        Get points near reference points and set linear distance as cost.
 
-    Returns:
-    --------
-    waypoints : np.array
-        Waypoints created from the ways.
-    '''
-    waypoints = []
-    for way in ways:
-        for i, (n0, n1) in enumerate(zip(way.nodes, way.nodes[1:])):
-            point0 = points[n0.id].ravel()[:2]
-            point1 = points[n1.id].ravel()[:2]
+        Parameters:
+        -----------
+        points : np.array
+            Points to check.
+        reference : np.array
+            Reference points.
+        max_dist : float
+            Maximum distance to check.
 
-            if i == 0:
-                waypoints.append(point0)
+        Returns:
+        --------
+        points : np.array
+            All points with a cost based on distance to reference points.
+        '''
+        if not isinstance(points, np.ndarray):
+            points = np.array(points)
+        if not isinstance(reference, np.ndarray):
+            reference = np.array(reference)
 
-            dist = np.linalg.norm(point1 - point0)
+        tree = cKDTree(reference, compact_nodes=False, balanced_tree=False)
+        dists, _ = np.array(tree.query(points, distance_upper_bound=max_dist))
+        mask = dists < max_dist
+        points = points[mask]
+        dists = dists[mask]
+        points = np.hstack([points, (dists / max_dist).reshape(-1, 1)])
+        return points, mask
 
-            if dist <= 1e-3:
-                waypoints.append(point1)
-                continue
+    def _split_ways(points, ways, max_dist=0.25):
+        '''
+        Equidistantly split ways into points with a maximal step size. Also only use footways from map data,
+        as we are not allowed to leave the footways.
 
-            vec = (point1 - point0) / dist
-            num = int(np.ceil(dist / max_dist))
-            step = dist / num
-            for j in range(num):
-                waypoints.append(point0 + (j + 1) * step * vec)
+        Parameters:
+        -----------
+        points : dict
+            Points to split ways on.
+        ways : dict
+            Ways to split.
+        max_dist : float
+            Maximal step size.
 
-    return np.array(waypoints)
+        Returns:
+        --------
+        waypoints : np.array
+            Waypoints created from the ways.
+        '''
+        waypoints = []
+        for way in ways:
+            for i, (n0, n1) in enumerate(zip(way.nodes, way.nodes[1:])):
+                point0 = points[n0.id].ravel()[:2]
+                point1 = points[n1.id].ravel()[:2]
+                dist = np.linalg.norm(point1 - point0)
+
+                if i == 0:
+                    waypoints.append(point0)
+                if dist <= 1e-3:
+                    waypoints.append(point1)
+                    continue
+
+                vec = (point1 - point0) / dist
+                num = int(np.ceil(dist / max_dist))
+                step = dist / num
+                for j in range(num):
+                    waypoints.append(point0 + (j + 1) * step * vec)
+
+        return np.array(waypoints)
 
 if __name__ == "__main__":
-
     with open(os.path.join(os.path.dirname(__file__), "../data", 'coords.mapdata'), "rb") as fh:
         map_data = pickle.load(fh)
 
@@ -147,4 +183,3 @@ if __name__ == "__main__":
     high = (map_data.max_x, map_data.max_y)
     grid = create_grid(low, high, cell_size=1)
     grid = fill_grid(grid, map_data, cell_size=1)
-
