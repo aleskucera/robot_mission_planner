@@ -2,19 +2,26 @@
 
 import os
 import sys
+import argparse
 
+import utm
 import gpxpy
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 
-from nav2_msgs.action import FollowGPSWaypoints
 from geographic_msgs.msg import GeoPose
+from geometry_msgs.msg import PoseStamped
+from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints
 
 class GPXFollower(Node):
-    def __init__(self, gpx_file):
+    def __init__(self, gpx_file, args):
         super().__init__('gpx_follower')
-        self._action_client = ActionClient(self, FollowGPSWaypoints, 'follow_gps_waypoints')
+        self.args = args
+        if args.use_gps:
+            self._action_client = ActionClient(self, FollowGPSWaypoints, 'follow_gps_waypoints')
+        else:
+            self._action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
         self.gpx_file = gpx_file
         self.parse_gpx_file()
 
@@ -30,11 +37,18 @@ class GPXFollower(Node):
             with open(self.gpx_file, 'r') as file:
                 gpx = gpxpy.parse(file)
                 for waypoint in gpx.waypoints:
-                    geo_pose = GeoPose()
-                    geo_pose.position.latitude = waypoint.latitude
-                    geo_pose.position.longitude = waypoint.longitude
-                    geo_pose.position.altitude = waypoint.elevation if waypoint.elevation else 0.0
-                    waypoints.append(geo_pose)
+                    if self.args.use_gps:
+                        pose = GeoPose()
+                        pose.position.latitude = waypoint.latitude
+                        pose.position.longitude = waypoint.longitude
+                        pose.position.altitude = waypoint.elevation if waypoint.elevation else 0.0
+                    else:
+                        pose = PoseStamped()
+                        pose.header.frame_id = 'utm'
+                        pose.header.stamp = self.get_clock().now().to_msg()
+                        utm_coords = utm.from_latlon(waypoint.latitude, waypoint.longitude)
+                        pose.pose.position.x, pose.pose.position.y = utm_coords[0], utm_coords[1]
+                    waypoints.append(pose)
         except Exception as e:
             self.get_logger().error(f'Error parsing GPX file: {e}')
             return []
@@ -47,10 +61,13 @@ class GPXFollower(Node):
         if not self.waypoints:
             return
 
-        waypoint_msg = FollowGPSWaypoints.Goal()
-        waypoint_msg.gps_poses = self.waypoints
+        if self.args.use_gps:
+            waypoint_msg = FollowGPSWaypoints.Goal()
+            waypoint_msg.gps_poses = self.waypoints
+        else:
+            waypoint_msg = FollowWaypoints.Goal()
 
-        self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to FollowGPSWaypoints")
+        self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to follow")
         send_goal_future = self._action_client.send_goal_async(
             waypoint_msg,
             feedback_callback=self.feedback_callback
@@ -58,13 +75,13 @@ class GPXFollower(Node):
         send_goal_future.add_done_callback(self.goal_response_callback)
 
     def goal_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
+        self.goal_handle = future.result()
+        if not self.goal_handle.accepted:
             self.get_logger().error('Goal rejected by server')
             return
 
         self.get_logger().info('Goal accepted by server')
-        result_future = goal_handle.get_result_async()
+        result_future = self.goal_handle.get_result_async()
         result_future.add_done_callback(self.result_callback)
 
     def feedback_callback(self, feedback_msg):
@@ -79,31 +96,56 @@ class GPXFollower(Node):
             self.get_logger().info("Successfully navigated all waypoints")
         rclpy.shutdown()
 
-def main(args=None):
-    rclpy.init(args=args)
+    def cancel_goal(self):
+        if self.goal_handle is not None:
+            self.get_logger().info("Cancelling the current goal")
+            cancel_future = self.goal_handle.cancel_goal_async()
+            cancel_future.add_done_callback(self.cancel_response_callback)
+        else:
+            self.get_logger().warn("No goal to cancel")
 
-    if len(sys.argv) < 2:
+    def cancel_response_callback(self, future):
+        cancel_result = future.result()
+        if cancel_result.goals_canceling:
+            self.get_logger().info("Goal successfully canceled")
+        else:
+            self.get_logger().warn("Failed to cancel goal")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='GPX Follower Node')
+
+    parser.add_argument("-f", "--file", type=str, required=True,
+                        help="Path to the GPX file containing waypoints")
+    parser.add_argument("--use-gps", action='store_true', help="Use GPS waypoints instead of UTM coordinates")
+
+    return parser.parse_args()
+
+
+def main(args=None):
+    if args.file is None:
         print("Please provide the path to the GPX file as an argument")
-        rclpy.shutdown()
         return
 
-    gpx_file_path = sys.argv[1]
-    gpx_file_path = os.path.join(os.path.dirname(__file__), "../../", gpx_file_path)
-    print(gpx_file_path)
+    gpx_file_path = args.file
+    gpx_file_path = os.path.join(os.path.dirname(__file__), "../", gpx_file_path)
     if not os.path.exists(gpx_file_path):
         print(f"GPX file {gpx_file_path} does not exist")
-        rclpy.shutdown()
         return
 
-    node = GPXFollower(gpx_file_path)
+    rclpy.init(args=args)
+    node = GPXFollower(gpx_file_path, args)
     try:
         node.send_path()
         rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("Node interrupted by user")
     finally:
+        node.cancel_goal()
         node.destroy_node()
         rclpy.shutdown()
 
+
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    main(args)
