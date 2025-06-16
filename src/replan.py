@@ -2,12 +2,15 @@ import os
 import pickle
 
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 
 from map_data import MapData, CoordsData
 
 def replan_path(path, grid):
-    pass
+    return NotImplementedError
+
+def replan_rrt(path, obstacles, grid):
+    return NotImpementedError
 
 def create_grid(low, high, cell_size=0.25):
     '''
@@ -35,16 +38,12 @@ def create_grid(low, high, cell_size=0.25):
 def fill_grid(grid, map_data, cell_size=0.25):
     obstacle_grid = np.zeros_like(grid, dtype=bool)
     path_grid = np.zeros_like(grid)
-    print(obstacle_grid.shape)
-    print(len(map_data.barriers_list))
 
-    for i in range(grid.shape[0]):
-        for obstacle in map_data.barriers_list:
-            if obstacle.line.contains(Point(grid[i][:2])):
-                obstacle_grid[i] = True
-                break
-
-    print(sum(obstacle_grid))
+    # for i in range(grid.shape[0]):
+    #     for obstacle in map_data.barriers_list:
+    #         if obstacle.line.contains(Point(grid[i][:2])):
+    #             obstacle_grid[i] = True
+    #             break
 
     paths = np.pad(split_ways(points, map_data.footways_list, cell_size))
     max_path_dist = 1
