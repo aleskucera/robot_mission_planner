@@ -31,10 +31,8 @@ class ReplanPath():
         return new_path
 
     def rrt(self, start, goal, obstacles, grid):
-        rrt_star = RRTStar(start, goal, obstacles, grid)
+        rrt_star = RRTStar(start, goal, obstacles, grid, simplify=self.args.simplify_path)
         path = rrt_star.find_path()
-        if path is not None and self.args.simplify_path:
-            path = self._simplify_path(path, obstacles)
 
         return path
 
@@ -54,6 +52,7 @@ class ReplanPath():
                 else:
                     new_path.append(start)
                     break
+        return new_path
 
     def _colides(self, path_seg, obstacles):
         for obstacle in obstacles:
