@@ -56,43 +56,58 @@ class GPXFollower(Node):
 
         self.get_logger().info("GPXFollower node initialized.")
 
+    def _convert_waypoint(self, waypoint):
+        if self.args.use_gps:
+            pose = GeoPose()
+            pose.position.latitude = waypoint["lat"]
+            pose.position.longitude = waypoint["lon"]
+            pose.position.altitude = waypoint["ele"] if waypoint["ele"] else 0.0
+        else:
+            pose = PoseStamped()
+            pose.header.frame_id = "utm"
+            pose.header.stamp = self.get_clock().now().to_msg()
+            utm_coords = utm.from_latlon(waypoint["lat"], waypoint["lon"])
+            pose.pose.position.x = utm_coords[0]
+            pose.pose.position.y = utm_coords[1]
+            pose.pose.position.z = waypoint["ele"] if waypoint["ele"] else 0.0
+
     def parse_gpx_file(self):
         waypoints = []
         try:
             with open(self.gps_file, "r") as file:
                 gpx = gpxpy.parse(file)
-                for waypoint in gpx.waypoints:
-                    if self.args.use_gps:
-                        pose = GeoPose()
-                        pose.position.latitude = waypoint.latitude
-                        pose.position.longitude = waypoint.longitude
-                        pose.position.altitude = (
-                            waypoint.elevation if waypoint.elevation else 0.0
-                        )
-                    else:
-                        pose = PoseStamped()
-                        pose.header.frame_id = "utm"
-                        pose.header.stamp = self.get_clock().now().to_msg()
-                        utm_coords = utm.from_latlon(
-                            waypoint.latitude, waypoint.longitude
-                        )
-                        pose.pose.position.x, pose.pose.position.y = (
-                            utm_coords[0],
-                            utm_coords[1],
-                        )
-                    waypoints.append(pose)
+            for waypoint in gpx.waypoints:
+                point = {
+                    "lat": waypoint.latitude,
+                    "lon": waypoint.longitude,
+                    "ele": waypoint.elevation or None,
+                }
+                waypoints.append(self._convert_waypoint(point))
         except Exception as e:
             self.get_logger().error(f"Error parsing GPX file: {e}")
             return []
         self.waypoints = waypoints
         if not self.waypoints:
             self.get_logger().error("No waypoints found in GPX file.")
-        self.get_logger().info(f"Parsed {len(self.waypoints)} waypoints from GPX file.")
+        else:
+            self.get_logger().info(f"Parsed {len(waypoints)} waypoints from GPX file.")
 
     def parse_yaml_file(self):
+        waypoints = []
         with open(self.gps_file, "r") as f:
-            file = yaml.safe_load(f)
-        print(file)
+            file_waypoints = yaml.safe_load(f)["waypoints"]
+        for waypoint in file_waypoints:
+            point = {"lat": waypoint["latitude"], "lon": waypoint["longitude"]}
+            if "elevation" in waypoint:
+                point["ele"] = waypoint["elevation"]
+            else:
+                point["ele"] = None
+            waypoints.append(self._convert_waypoint(point))
+        self.waypoints = waypoints
+        if not self.waypoints:
+            self.get_logger().error("No waypoints found in YAML file.")
+        else:
+            self.get_logger().info(f"Parsed {len(waypoints)} waypoints from YAML file.")
 
     def send_path(self):
         if not self.waypoints:
