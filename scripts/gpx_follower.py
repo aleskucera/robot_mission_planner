@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import argparse
 
 import utm
+import yaml
 import gpxpy
 import rclpy
 from rclpy.node import Node
@@ -14,51 +14,85 @@ from geographic_msgs.msg import GeoPose
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints
 
+
 class GPXFollower(Node):
-    def __init__(self, gpx_file, args):
-        super().__init__('gpx_follower')
+    def __init__(self, gps_file, args):
+        super().__init__("gps_follower")
         self.args = args
         if args.use_gps:
-            self._action_client = ActionClient(self, FollowGPSWaypoints, 'follow_gps_waypoints')
+            self._action_client = ActionClient(
+                self, FollowGPSWaypoints, "follow_gps_waypoints"
+            )
         else:
-            self._action_client = ActionClient(self, FollowWaypoints, 'follow_waypoints')
+            self._action_client = ActionClient(
+                self, FollowWaypoints, "follow_waypoints"
+            )
 
-        self.gpx_file = gpx_file
-        self.parse_gpx_file()
+        self.gps_file = gps_file
+        if not os.path.exists(self.gps_file):
+            self.get_logger().error(f"GPS file {self.gps_file} does not exist")
+            exit(1)
+
+        if self.gps_file.endswith(".gpx"):
+            self.parse_gpx_file()
+        elif self.gps_file.endswith(".yaml"):
+            self.parse_yaml_file()
+        else:
+            self.get_logger().error(
+                "Unsupported file format. Please provide a .gpx or .yaml file."
+            )
+            exit(1)
 
         # Wait for the action server to be available
         while not self._action_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().info(f'Waiting for {"/follow_gps_waypoints" if self.args.use_gps \
-                                    else "/follow_waypoints"} action server...')
+            self.get_logger().info(
+                f"Waiting for {
+                    '/follow_gps_waypoints'
+                    if self.args.use_gps
+                    else '/follow_waypoints'
+                } action server..."
+            )
         self.goal_handle = None
 
-        self.get_logger().info('GPXFollower node initialized.')
+        self.get_logger().info("GPXFollower node initialized.")
 
     def parse_gpx_file(self):
         waypoints = []
         try:
-            with open(self.gpx_file, 'r') as file:
+            with open(self.gps_file, "r") as file:
                 gpx = gpxpy.parse(file)
                 for waypoint in gpx.waypoints:
                     if self.args.use_gps:
                         pose = GeoPose()
                         pose.position.latitude = waypoint.latitude
                         pose.position.longitude = waypoint.longitude
-                        pose.position.altitude = waypoint.elevation if waypoint.elevation else 0.0
+                        pose.position.altitude = (
+                            waypoint.elevation if waypoint.elevation else 0.0
+                        )
                     else:
                         pose = PoseStamped()
-                        pose.header.frame_id = 'utm'
+                        pose.header.frame_id = "utm"
                         pose.header.stamp = self.get_clock().now().to_msg()
-                        utm_coords = utm.from_latlon(waypoint.latitude, waypoint.longitude)
-                        pose.pose.position.x, pose.pose.position.y = utm_coords[0], utm_coords[1]
+                        utm_coords = utm.from_latlon(
+                            waypoint.latitude, waypoint.longitude
+                        )
+                        pose.pose.position.x, pose.pose.position.y = (
+                            utm_coords[0],
+                            utm_coords[1],
+                        )
                     waypoints.append(pose)
         except Exception as e:
-            self.get_logger().error(f'Error parsing GPX file: {e}')
+            self.get_logger().error(f"Error parsing GPX file: {e}")
             return []
         self.waypoints = waypoints
         if not self.waypoints:
-            self.get_logger().error('No waypoints found in GPX file.')
-        self.get_logger().info(f'Parsed {len(self.waypoints)} waypoints from GPX file.')
+            self.get_logger().error("No waypoints found in GPX file.")
+        self.get_logger().info(f"Parsed {len(self.waypoints)} waypoints from GPX file.")
+
+    def parse_yaml_file(self):
+        with open(self.gps_file, "r") as f:
+            file = yaml.safe_load(f)
+        print(file)
 
     def send_path(self):
         if not self.waypoints:
@@ -72,18 +106,17 @@ class GPXFollower(Node):
 
         self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to follow")
         send_goal_future = self._action_client.send_goal_async(
-            waypoint_msg,
-            feedback_callback=self.feedback_callback
+            waypoint_msg, feedback_callback=self.feedback_callback
         )
         send_goal_future.add_done_callback(self.goal_response_callback)
 
     def goal_response_callback(self, future):
         self.goal_handle = future.result()
         if not self.goal_handle.accepted:
-            self.get_logger().error('Goal rejected by server')
+            self.get_logger().error("Goal rejected by server")
             return
 
-        self.get_logger().info('Goal accepted by server')
+        self.get_logger().info("Goal accepted by server")
         result_future = self.goal_handle.get_result_async()
         result_future.add_done_callback(self.result_callback)
 
@@ -116,11 +149,20 @@ class GPXFollower(Node):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='GPX Follower Node')
+    parser = argparse.ArgumentParser(description="GPX Follower Node")
 
-    parser.add_argument("-f", "--file", type=str, required=True,
-                        help="Path to the GPX file containing waypoints")
-    parser.add_argument("--use-gps", action='store_true', help="Use GPS waypoints instead of UTM coordinates")
+    parser.add_argument(
+        "-f",
+        "--file",
+        type=str,
+        required=True,
+        help="Path to the GPX file containing waypoints",
+    )
+    parser.add_argument(
+        "--use-gps",
+        action="store_true",
+        help="Use GPS waypoints instead of UTM coordinates",
+    )
 
     return parser.parse_args()
 
@@ -148,6 +190,6 @@ def main(args=None):
         node.destroy_node()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = parse_args()
     main(args)
