@@ -4,9 +4,10 @@ import argparse
 
 import numpy as np
 import shapely as sh
-import shapely.geometry as sg
+import matplotlib.pyplot as plt
 from scipy.spatial import cKDTree
 from shapely.geometry import LineString
+from matplotlib.patches import Polygon as MplPolygon
 
 from rrt_star import RRTStar
 from map_data import MapData, CoordsData
@@ -14,10 +15,11 @@ from utils import parse_path, ways_to_shapely
 
 
 class ReplanPath:
-    def __init__(self, args):
+    def __init__(self, args, obstacles=None):
         self.args = args
 
         self.grid = self._create_grid(args.low, args.high, args.cell_size)
+        self.obstacles = obstacles
 
     def replan_rrt(self, path, obstacles):
         new_path = []
@@ -71,8 +73,14 @@ class ReplanPath:
     def _rrt(self, start, goal, obstacles):
         grid = self._reshape_grid()
         obst = self._convert_obstacles(obstacles)
+        self.obstacles = obstacles
         rrt_star = RRTStar(start, goal, obst, grid, simplify=self.args.simplify_path)
         path = rrt_star.find_path()
+        if path is None:  # debug
+            rrt_star.visualize()
+        else:
+            path += self.args.low  # Convert back to original coordinates
+            path = np.hstack([path, np.zeros((path.shape[0], 1))])  # Add z-coordinate
 
         return path
 
@@ -120,7 +128,7 @@ class ReplanPath:
             ((0, 0), (0, 1)),
         )
         max_path_dist = 1
-        neighbor_cost = "quadratic"
+        neighbor_cost = "zero"
         tmp, mask = self._points_near_ref(path_grid, paths, max_path_dist)
         path_grid = np.pad(path_grid, ((0, 0), (0, 1)))
         if neighbor_cost == "linear":
@@ -207,6 +215,48 @@ class ReplanPath:
 
         return np.array(waypoints)
 
+    def visualize(self, path):
+        """Visualize the grid, obstacles, RRT* tree, and path using Matplotlib."""
+        _, ax = plt.subplots()
+
+        # Plot grid as a heatmap (0: white, 1: gray)
+        # grid_display = np.flipud(self._reshape_grid())  # Flip for correct orientation
+        # ax.imshow(
+        #     grid_display,
+        #     cmap="Greys",
+        #     origin="lower",
+        #     extent=[
+        #         0,
+        #         self.grid.shape[1] * self.args.cell_size,
+        #         0,
+        #         self.grid.shape[0] * self.args.cell_size,
+        #     ],
+        # )
+
+        # Plot obstacles
+        for obstacle in self.obstacles:
+            if obstacle.geom_type == "Polygon":
+                x, y = obstacle.exterior.xy
+                ax.add_patch(MplPolygon(list(zip(x, y)), color="red", alpha=0.5))
+
+        # Plot start and goal
+        print(path[0])
+        ax.plot(path[0, 0], path[0, 1], "go", label="Start")
+        ax.plot(path[-1, 0], path[-1, 1], "bo", label="Goal")
+
+        # Plot path if found
+        if path is not None:
+            path = np.array(path)
+            ax.plot(path[:, 0], path[:, 1], "k-", linewidth=2, label="Path")
+
+        # Set plot properties
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_title("RRT* Path Planning")
+        ax.legend()
+        ax.grid(True)
+        plt.show()
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -234,8 +284,7 @@ if __name__ == "__main__":
     obstacles = ways_to_shapely(map_data.barriers_list)
     path = parse_path(os.path.join(os.path.dirname(__file__), "../", args.path))
 
-    replanner = ReplanPath(args)
+    replanner = ReplanPath(args, obstacles)
     replanner.fill_grid(map_data)
     new_path = replanner.replan_rrt(path, obstacles)
-    print(path)
-    print(new_path)
+    replanner.visualize(new_path)
