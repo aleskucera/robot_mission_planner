@@ -1,15 +1,16 @@
 import os
-import yaml
 import pickle
 import argparse
 
 import numpy as np
+import shapely as sh
 import shapely.geometry as sg
 from scipy.spatial import cKDTree
 from shapely.geometry import LineString
 
 from rrt_star import RRTStar
 from map_data import MapData, CoordsData
+from utils import parse_path, ways_to_shapely
 
 
 class ReplanPath:
@@ -18,7 +19,7 @@ class ReplanPath:
 
         self.grid = self._create_grid(args.low, args.high, args.cell_size)
 
-    def replan_rrt(self, path, obstacles, grid):
+    def replan_rrt(self, path, obstacles):
         new_path = []
         for i in range(len(path) - 1):
             new_path.append(path[i])
@@ -26,24 +27,58 @@ class ReplanPath:
             goal = path[i + 1]
             path_seg = LineString([start[:2], goal[:2]])
             if self._colides(path_seg, obstacles):
-                way = rrt(start[:2], goal[:2], obstacles, grid)
+                way = self._rrt(
+                    start[:2] - self.args.low, goal[:2] - self.args.low, obstacles
+                )
+                if way is None:
+                    print("RRT* failed to find a path.")
+                    exit(1)
                 new_path.extend(way[1:-1])
                 break
 
         new_path.append(path[-1])
-        return new_path
+        return np.array(new_path)
 
-    def rrt(self, start, goal, obstacles, grid):
-        rrt_star = RRTStar(
-            start, goal, obstacles, grid, simplify=self.args.simplify_path
-        )
+    def _reshape_grid(self):
+        """
+        Reshape the grid to match the shape of the map data.
+        """
+        low = self.args.low
+        high = self.args.high
+        cell_size = self.args.cell_size
+        num_x = int(np.ceil((high[0] - low[0]) / cell_size))
+        num_y = int(np.ceil((high[1] - low[1]) / cell_size))
+        return self.grid.reshape((num_x, num_y, 4))[:, :, -1]
+
+    def _convert_obstacles(self, obstacles):
+        """
+        Convert obstacles to a format suitable for RRT*.
+        Parameters:
+        -----------
+        obstacles : list
+            List of obstacles as shapely geometries.
+        Returns:
+        --------
+        obst : list
+            List of obstacles as shapely polygons.
+        """
+        obst = []
+        for obstacle in obstacles:
+            obstacle = sh.transform(obstacle, lambda x: (x - self.args.low))
+            obst.append(obstacle)
+        return obst
+
+    def _rrt(self, start, goal, obstacles):
+        grid = self._reshape_grid()
+        obst = self._convert_obstacles(obstacles)
+        rrt_star = RRTStar(start, goal, obst, grid, simplify=self.args.simplify_path)
         path = rrt_star.find_path()
 
         return path
 
     def _colides(self, path_seg, obstacles):
         for obstacle in obstacles:
-            if sg.intersects(path_seg, obstacle):
+            if obstacle.contains(path_seg) or obstacle.intersects(path_seg):
                 return True
         return False
 
@@ -78,7 +113,7 @@ class ReplanPath:
 
     def fill_grid(self, map_data):
         points = map_data.get_points()
-        path_grid = np.zeros_like(self.grid)
+        path_grid = self.grid
 
         paths = np.pad(
             self._split_ways(points, map_data.footways_list, self.args.cell_size),
@@ -86,23 +121,20 @@ class ReplanPath:
         )
         max_path_dist = 1
         neighbor_cost = "quadratic"
-        print(path_grid.shape, paths.shape)
         tmp, mask = self._points_near_ref(path_grid, paths, max_path_dist)
-        print(tmp.shape, mask.shape)
-        print(mask.sum())
         path_grid = np.pad(path_grid, ((0, 0), (0, 1)))
         if neighbor_cost == "linear":
             pass
         elif neighbor_cost == "quadratic":
-            tmp[:, 3] = path_grid[:, 3] ** 2
+            tmp[:, 3] = tmp[:, 3] ** 2
         elif neighbor_cost == "zero":
             tmp[:, 3] = 0
         else:
             print(f"Unknown neighbor cost: {neighbor_cost}")
         tmp[:, 3] /= max_path_dist**2 if neighbor_cost == "quadratic" else 1
-        path_grid[mask] = tmp[:, 3]
+        path_grid[mask, 3] = tmp[:, 3]
 
-        return path_grid.copy()
+        self.grid = path_grid
 
     def _points_near_ref(self, points, reference, max_dist=1):
         """
@@ -179,8 +211,10 @@ class ReplanPath:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--file", type=str, default="coords.mapdata", help="Map data file"
+        "--file", type=str, default="data/coords.mapdata", help="Map data file"
     )
+    parser.add_argument("--path", type=str, default="data/coords.gpx", help="Path file")
+    parser.add_argument("--simplify_path", action="store_true", help="Simplify path")
     parser.add_argument(
         "--cell_size", type=float, default=0.25, help="Cell size for the grid"
     )
@@ -191,13 +225,17 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    with open(
-        os.path.join(os.path.dirname(__file__), "../data", args.file), "rb"
-    ) as fh:
+    with open(os.path.join(os.path.dirname(__file__), "../", args.file), "rb") as fh:
         map_data = pickle.load(fh)
 
     args.low = (map_data.min_x, map_data.min_y)
     args.high = (map_data.max_x, map_data.max_y)
 
-    replaner = ReplanPath(args)
-    replaner.fill_grid(map_data)
+    obstacles = ways_to_shapely(map_data.barriers_list)
+    path = parse_path(os.path.join(os.path.dirname(__file__), "../", args.path))
+
+    replanner = ReplanPath(args)
+    replanner.fill_grid(map_data)
+    new_path = replanner.replan_rrt(path, obstacles)
+    print(path)
+    print(new_path)

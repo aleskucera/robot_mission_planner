@@ -56,9 +56,6 @@ class RRTStar:
             p2_grid = (int(p2_grid[0]), int(p2_grid[1]))
             bres_line = self._bresenham(p1_grid, p2_grid)
             for point in bres_line:
-                if 40 < point[0] < 60 and 40 < point[1] < 60:
-                    print(point)
-                    print(self.grid[point[0] - 1, point[1] - 1])
                 if (
                     self.grid[point[0] - 1, point[1] - 1]
                     >= self.traversability_threshold
