@@ -623,7 +623,6 @@ class MapData:
             ):
                 if not way.is_area:
                     way = self.line_to_polygon(way, width=2)
-                print(way.tags)
                 self.barriers.add(way)
 
     def sets_to_lists(self):

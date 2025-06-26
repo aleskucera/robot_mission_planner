@@ -21,16 +21,16 @@ class ReplanPath:
         self.grid = self._create_grid(args.low, args.high, args.cell_size)
         self.obstacles = obstacles
 
-    def replan_rrt(self, path, obstacles):
+    def replan_rrt(self, path):
         new_path = []
         for i in range(len(path) - 1):
             new_path.append(path[i])
             start = path[i]
             goal = path[i + 1]
             path_seg = LineString([start[:2], goal[:2]])
-            if self._colides(path_seg, obstacles):
+            if self._colides(path_seg, self.obstacles):
                 way = self._rrt(
-                    start[:2] - self.args.low, goal[:2] - self.args.low, obstacles
+                    start[:2] - self.args.low, goal[:2] - self.args.low, self.obstacles
                 )
                 if way is None:
                     print("RRT* failed to find a path.")
@@ -48,9 +48,22 @@ class ReplanPath:
         low = self.args.low
         high = self.args.high
         cell_size = self.args.cell_size
+
         num_x = int(np.ceil((high[0] - low[0]) / cell_size))
         num_y = int(np.ceil((high[1] - low[1]) / cell_size))
-        return self.grid.reshape((num_x, num_y, 4))[:, :, -1]
+
+        grid = np.zeros((num_x, num_y), dtype=np.float32)
+        x = self.grid[:, 0]
+        y = self.grid[:, 1]
+        c = self.grid[:, 3]
+
+        x_indices = np.floor((x - low[0]) / cell_size).astype(int)
+        y_indices = np.floor((y - low[1]) / cell_size).astype(int)
+        x_indices = np.clip(x_indices, 0, num_x - 1)
+        y_indices = np.clip(y_indices, 0, num_y - 1)
+
+        grid[x_indices, y_indices] = c
+        return grid.T
 
     def _convert_obstacles(self, obstacles):
         """
@@ -128,7 +141,7 @@ class ReplanPath:
             ((0, 0), (0, 1)),
         )
         max_path_dist = 1
-        neighbor_cost = "zero"
+        neighbor_cost = "quadratic"
         tmp, mask = self._points_near_ref(path_grid, paths, max_path_dist)
         path_grid = np.pad(path_grid, ((0, 0), (0, 1)))
         if neighbor_cost == "linear":
@@ -141,6 +154,7 @@ class ReplanPath:
             print(f"Unknown neighbor cost: {neighbor_cost}")
         tmp[:, 3] /= max_path_dist**2 if neighbor_cost == "quadratic" else 1
         path_grid[mask, 3] = tmp[:, 3]
+        path_grid[~mask, 3] = 0.5
 
         self.grid = path_grid
 
@@ -220,18 +234,18 @@ class ReplanPath:
         _, ax = plt.subplots()
 
         # Plot grid as a heatmap (0: white, 1: gray)
-        # grid_display = np.flipud(self._reshape_grid())  # Flip for correct orientation
-        # ax.imshow(
-        #     grid_display,
-        #     cmap="Greys",
-        #     origin="lower",
-        #     extent=[
-        #         0,
-        #         self.grid.shape[1] * self.args.cell_size,
-        #         0,
-        #         self.grid.shape[0] * self.args.cell_size,
-        #     ],
-        # )
+        grid_display = self._reshape_grid()
+        ax.imshow(
+            grid_display,
+            cmap="Greys",
+            origin="lower",
+            extent=[
+                self.args.low[0],
+                self.args.high[0],
+                self.args.low[1],
+                self.args.high[1],
+            ],
+        )
 
         # Plot obstacles
         for obstacle in self.obstacles:
@@ -239,31 +253,33 @@ class ReplanPath:
                 x, y = obstacle.exterior.xy
                 ax.add_patch(MplPolygon(list(zip(x, y)), color="red", alpha=0.5))
 
-        # Plot start and goal
-        print(path[0])
-        ax.plot(path[0, 0], path[0, 1], "go", label="Start")
-        ax.plot(path[-1, 0], path[-1, 1], "bo", label="Goal")
-
         # Plot path if found
         if path is not None:
             path = np.array(path)
-            ax.plot(path[:, 0], path[:, 1], "k-", linewidth=2, label="Path")
+            ax.plot(path[:, 0], path[:, 1], "m-", linewidth=2, label="Path")
+
+        # Plot start and goal
+        ax.plot(path[0, 0], path[0, 1], "go", label="Start")
+        ax.plot(path[-1, 0], path[-1, 1], "bo", label="Goal")
 
         # Set plot properties
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_title("RRT* Path Planning")
+        ax.set_xlabel("Northing [m]")
+        ax.set_ylabel("Easting [m]")
+        ax.set_title("Replanned Path")
+
         ax.legend()
         ax.grid(True)
+        ax.set_aspect("equal")
+        ax.set_xlim(self.args.low[0], self.args.high[0])
+        ax.set_ylim(self.args.low[1], self.args.high[1])
+
         plt.show()
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--file", type=str, default="data/coords.mapdata", help="Map data file"
-    )
     parser.add_argument("--path", type=str, default="data/coords.gpx", help="Path file")
+    parser.add_argument("--file", type=str, default=None, help="Map data file")
     parser.add_argument("--simplify_path", action="store_true", help="Simplify path")
     parser.add_argument(
         "--cell_size", type=float, default=0.25, help="Cell size for the grid"
@@ -275,16 +291,24 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    with open(os.path.join(os.path.dirname(__file__), "../", args.file), "rb") as fh:
-        map_data = pickle.load(fh)
+    path_file = os.path.join(os.path.dirname(__file__), "../", args.path)
+    path_data = parse_path(path_file)
+
+    if args.file is None:
+        map_data = MapData(path_data, coords_type="array")
+        map_data.run_queries()
+        map_data.run_parse()
+    else:
+        with open(
+            os.path.join(os.path.dirname(__file__), "../", args.file), "rb"
+        ) as fh:
+            map_data = pickle.load(fh)
 
     args.low = (map_data.min_x, map_data.min_y)
     args.high = (map_data.max_x, map_data.max_y)
-
     obstacles = ways_to_shapely(map_data.barriers_list)
-    path = parse_path(os.path.join(os.path.dirname(__file__), "../", args.path))
 
     replanner = ReplanPath(args, obstacles)
     replanner.fill_grid(map_data)
-    new_path = replanner.replan_rrt(path, obstacles)
+    new_path = replanner.replan_rrt(path_data[0])
     replanner.visualize(new_path)

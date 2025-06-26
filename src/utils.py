@@ -27,9 +27,9 @@ def parse_path(path_file):
         return []
 
     if path_file.endswith(".gpx"):
-        return np.array(parse_gpx_file(path_file))
+        return parse_gpx_file(path_file)
     elif path_file.endswith(".yaml"):
-        return np.array(parse_yaml_file(path_file))
+        return parse_yaml_file(path_file)
     else:
         print(f"Unsupported file format: {path_file}.")
         return []
@@ -37,6 +37,7 @@ def parse_path(path_file):
 
 def parse_gpx_file(gpx_file):
     waypoints = []
+    zone_num, zone_let = None, None
     try:
         with open(gpx_file, "r") as file:
             gpx = gpxpy.parse(file)
@@ -54,12 +55,16 @@ def parse_gpx_file(gpx_file):
         print("No waypoints found in GPX file.")
     else:
         print(f"Parsed {len(waypoints)} waypoints from GPX file.")
+        zone_num, zone_let = utm.from_latlon(
+            gpx.waypoints[0].latitude, gpx.waypoints[0].longitude
+        )[2:]
 
-    return waypoints
+    return np.array(waypoints), zone_num, zone_let
 
 
 def parse_yaml_file(yaml_file):
     waypoints = []
+    zone_num, zone_let = None, None
     with open(yaml_file, "r") as f:
         file_waypoints = yaml.safe_load(f)["waypoints"]
     for waypoint in file_waypoints:
@@ -73,6 +78,11 @@ def parse_yaml_file(yaml_file):
         print("No waypoints found in YAML file.")
     else:
         print(f"Parsed {len(waypoints)} waypoints from YAML file.")
+        zone_num, zone_let = utm.from_latlon(
+            file_waypoints[0]["latitude"], file_waypoints[0]["longitude"]
+        )[2:]
+
+    return np.array(waypoints), zone_num, zone_let
 
 
 def convert_waypoint(point):
