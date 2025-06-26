@@ -14,7 +14,7 @@ class RRTStar:
         goal: Tuple[float, float],
         obstacles: List,
         grid: np.ndarray,
-        max_iter: int = 1000,
+        max_iter: int = 5000,
         step_size: float = 0.5,
         neighbor_radius: float = 1.0,
         grid_scale: float = 1.0,
@@ -56,6 +56,11 @@ class RRTStar:
             p2_grid = (int(p2_grid[0]), int(p2_grid[1]))
             bres_line = self._bresenham(p1_grid, p2_grid)
             for point in bres_line:
+                if (
+                    0 < point[0] < self.grid_shape[1]
+                    and 0 < point[1] < self.grid_shape[0]
+                ):
+                    break
                 if (
                     self.grid[point[0] - 1, point[1] - 1]
                     >= self.traversability_threshold
@@ -171,7 +176,7 @@ class RRTStar:
             1 + avg_cost
         )  # Scale distance by average traversability cost
 
-    def find_path(self) -> Optional[List[np.ndarray]]:
+    def find_path(self) -> Optional[np.ndarray]:
         """Main RRT* algorithm to find a path from start to goal."""
         for _ in range(self.max_iter):
             while True:
@@ -234,7 +239,7 @@ class RRTStar:
                         self.cost[goal_idx] = self.cost[new_idx] + self._path_cost(
                             new_point, self.goal
                         )
-                        return self._reconstruct_path(goal_idx)
+                        return np.array(self._reconstruct_path(goal_idx))
 
         return None
 
