@@ -19,7 +19,7 @@ class GPXFollower(Node):
     def __init__(self, gps_file, args):
         super().__init__("gps_follower")
         self.args = args
-        if args.use_gps:
+        if not args.use_utm:
             self._action_client = ActionClient(
                 self, FollowGPSWaypoints, "follow_gps_waypoints"
             )
@@ -48,7 +48,7 @@ class GPXFollower(Node):
             self.get_logger().info(
                 f"Waiting for {
                     '/follow_gps_waypoints'
-                    if self.args.use_gps
+                    if not self.args.use_utm
                     else '/follow_waypoints'
                 } action server..."
             )
@@ -57,7 +57,7 @@ class GPXFollower(Node):
         self.get_logger().info("GPXFollower node initialized.")
 
     def _convert_waypoint(self, waypoint):
-        if self.args.use_gps:
+        if not self.args.use_utm:
             pose = GeoPose()
             pose.position.latitude = waypoint["lat"]
             pose.position.longitude = waypoint["lon"]
@@ -70,6 +70,8 @@ class GPXFollower(Node):
             pose.pose.position.x = utm_coords[0]
             pose.pose.position.y = utm_coords[1]
             pose.pose.position.z = waypoint["ele"] if waypoint["ele"] else 0.0
+
+        return pose
 
     def parse_gpx_file(self):
         waypoints = []
@@ -113,7 +115,7 @@ class GPXFollower(Node):
         if not self.waypoints:
             return
 
-        if self.args.use_gps:
+        if not self.args.use_utm:
             waypoint_msg = FollowGPSWaypoints.Goal()
             waypoint_msg.gps_poses = self.waypoints
         else:
@@ -171,22 +173,18 @@ def parse_args():
         "--file",
         type=str,
         required=True,
-        help="Path to the GPX file containing waypoints",
+        help="Path to the GPX of YAML file containing waypoints",
     )
     parser.add_argument(
-        "--use-gps",
+        "--use-utm",
         action="store_true",
-        help="Use GPS waypoints instead of UTM coordinates",
+        help="Convert waypoints to UTM coordinates",
     )
 
     return parser.parse_args()
 
 
-def main(args=None):
-    if args.file is None:
-        print("Please provide the path to the GPX file as an argument")
-        return
-
+def main(args):
     gpx_file_path = args.file
     gpx_file_path = os.path.join(os.path.dirname(__file__), "../", gpx_file_path)
     if not os.path.exists(gpx_file_path):
