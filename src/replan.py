@@ -34,9 +34,8 @@ class ReplanPath:
                 )
                 if way is None:
                     print("RRT* failed to find a path.")
-                    exit(1)
+                    return None
                 new_path.extend(way[1:-1])
-                break
 
         new_path.append(path[-1])
         return np.array(new_path)
@@ -229,7 +228,7 @@ class ReplanPath:
 
         return np.array(waypoints)
 
-    def visualize(self, path):
+    def visualize(self, path, old_path=None):
         """Visualize the grid, obstacles, RRT* tree, and path using Matplotlib."""
         _, ax = plt.subplots()
 
@@ -253,10 +252,16 @@ class ReplanPath:
                 x, y = obstacle.exterior.xy
                 ax.add_patch(MplPolygon(list(zip(x, y)), color="red", alpha=0.5))
 
+        # Plot old path if provided
+        if old_path is not None:
+            # old_path = np.array(old_path)
+            ax.plot(old_path[:, 0], old_path[:, 1], "c-", linewidth=2, label="Path")
+
         # Plot path if found
         if path is not None:
-            path = np.array(path)
+            # path = np.array(path)
             ax.plot(path[:, 0], path[:, 1], "m-", linewidth=2, label="Path")
+            ax.scatter(path[:, 0], path[:, 1], c="m", s=20, label="Path Points")
 
         # Plot start and goal
         ax.plot(path[0, 0], path[0, 1], "go", label="Start")
@@ -311,4 +316,4 @@ if __name__ == "__main__":
     replanner = ReplanPath(args, obstacles)
     replanner.fill_grid(map_data)
     new_path = replanner.replan_rrt(path_data[0])
-    replanner.visualize(new_path)
+    replanner.visualize(new_path, path_data[0])
