@@ -1,0 +1,7 @@
+Flask
+numpy
+ortools
+gdal
+bs4
+setuptools
+shapely

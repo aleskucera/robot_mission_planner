@@ -1,2 +1,6 @@
 *.pyc
 .DS_Store
+*.tif
+data/*
+precomputed_tiles/
+
