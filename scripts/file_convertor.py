@@ -1,12 +1,12 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import argparse
 
 import yaml
 
-sys.path.append(
-    f"{os.path.dirname(__file__)}/../src"
-)  # Adjust the path to your project structure
+sys.path.append(f"{os.path.dirname(__file__)}/../src")
 from utils import create_gpx_content
 
 

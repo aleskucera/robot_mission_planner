@@ -1,8 +1,10 @@
-import matplotlib.pyplot as plt
-import numpy as np
+#!/usr/bin/env python3
+
 import rasterio
-from rasterio.enums import Resampling
+import numpy as np
+import matplotlib.pyplot as plt
 from rasterio.windows import Window
+from rasterio.enums import Resampling
 
 # Use the path to your downloaded TIFF file
 filepath = "./data/ogd-10m-at/dhm_at_lamb_10m_2018.tif"
