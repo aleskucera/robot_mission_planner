@@ -1,40 +1,13 @@
-import argparse
+import os
 import sys
+import argparse
 
 import yaml
 
-
-def create_gpx_content(waypoints_data, creator_name="YAML to GPX Converter"):
-    """
-    Generates the XML content for a GPX file from a list of waypoint dictionaries.
-    """
-    gpx_waypoints = []
-    for point in waypoints_data:
-        try:
-            # Create a <wpt> tag for each point
-            lat = point["latitude"]
-            lon = point["longitude"]
-            gpx_waypoints.append(f'  <wpt lat="{lat}" lon="{lon}"></wpt>')
-        except KeyError as e:
-            print(
-                f"Warning: Skipping a waypoint due to missing key: {e}", file=sys.stderr
-            )
-            continue
-
-    # Join all waypoint strings
-    waypoints_xml = "\n".join(gpx_waypoints)
-
-    # Assemble the final GPX file content using a template
-    gpx_template = f"""<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" 
-     creator="{creator_name}" 
-     xmlns="http://www.topografix.com/GPX/1/1" 
-     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
-     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
-{waypoints_xml}
-</gpx>
-    """
-    return gpx_template.strip()
+sys.path.append(
+    f"{os.path.dirname(__file__)}/../src"
+)  # Adjust the path to your project structure
+from utils import create_gpx_content
 
 
 def convert_yaml_to_gpx(yaml_file_path, gpx_file_path):
@@ -85,28 +58,47 @@ def convert_yaml_to_gpx(yaml_file_path, gpx_file_path):
     print("Conversion successful!")
 
 
-if __name__ == "__main__":
-    # Set up command-line argument parsing for user-friendly execution
+def parse_args():
     parser = argparse.ArgumentParser(
         description="Convert a YAML file containing geographic waypoints to a GPX file."
     )
     parser.add_argument(
-        "input_yaml", help="Path to the input YAML file (e.g., wc_anlage025.yaml)"
+        "--input",
+        required=True,
+        help="Path to the input YAML file (e.g., wc_anlage025.yaml)",
     )
     parser.add_argument(
-        "output_gpx",
-        nargs="?",  # Make the output filename optional
+        "--output",
         default=None,
         help="Path to the output GPX file (e.g., output.gpx). If not provided, it will be based on the input filename.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    if not args.input.endswith((".yaml", ".yml")):
+        print(
+            "Error: Input file must be a YAML or GPX file with.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Which conversion to perform
+    yaml_2_gpx = args.input.lower().endswith((".yaml", ".yml"))
 
     # If output filename is not provided, create one from the input filename
-    output_filename = args.output_gpx
+    output_filename = args.output
     if output_filename is None:
         # Replaces .yaml (or .yml) with .gpx
-        base_name = args.input_yaml.rsplit(".", 1)[0]
-        output_filename = f"{base_name}.gpx"
+        base_name = args.input.rsplit(".", 1)[0]
+        if yaml_2_gpx:
+            output_filename = f"{base_name}.gpx"
+        else:
+            output_filename = f"{base_name}.yaml"
 
-    convert_yaml_to_gpx(args.input_yaml, output_filename)
+    if yaml_2_gpx:
+        convert_yaml_to_gpx(args.input, output_filename)
+    else:
+        convert_gpx_to_yaml(args.input, output_filename)

@@ -1,4 +1,5 @@
 import os
+import sys
 import pickle
 import argparse
 
@@ -9,9 +10,10 @@ from scipy.spatial import cKDTree
 from shapely.geometry import LineString
 from matplotlib.patches import Polygon as MplPolygon
 
+sys.path.append(f"{os.path.dirname(__file__)}/../src")
 from rrt_star import RRTStar
 from map_data import MapData, CoordsData
-from utils import parse_path, ways_to_shapely
+from utils import parse_path, ways_to_shapely, create_gpx_content, utm_path_to_latlon
 
 
 class ReplanPath:
@@ -289,6 +291,8 @@ def parse_args():
     parser.add_argument(
         "--cell_size", type=float, default=0.25, help="Cell size for the grid"
     )
+    parser.add_argument("--save", type=str, default=None, help="Save path to file")
+    parser.add_argument("--visualize", action="store_true", help="Visualize the path")
 
     return parser.parse_args()
 
@@ -316,4 +320,12 @@ if __name__ == "__main__":
     replanner = ReplanPath(args, obstacles)
     replanner.fill_grid(map_data)
     new_path = replanner.replan_rrt(path_data[0])
-    replanner.visualize(new_path, path_data[0])
+
+    if args.save:
+        new_wgs_path = utm_path_to_latlon(new_path, path_data[1], path_data[2])
+        gpx_content = create_gpx_content(new_wgs_path, creator_name="RRT* Replanner")
+        with open(args.save, "w") as f:
+            f.write(gpx_content)
+
+    if args.visualize:
+        replanner.visualize(new_path, path_data[0])

@@ -4,7 +4,6 @@ import utm
 import yaml
 import gpxpy
 import numpy as np
-from shapely.geometry import Polygon
 
 
 def parse_path(path_file):
@@ -90,6 +89,43 @@ def convert_waypoint(point):
     return utm_point + (
         point.get("ele", 0),
     )  # Add elevation if available, default to 0
+
+
+def utm_path_to_latlon(path, zone_num, zone_let):
+    wgs_path = []
+    for point in path:
+        lat, lon = utm.to_latlon(point[0], point[1], zone_num, zone_let)
+        wgs_path.append({"latitude": lat, "longitude": lon, "elevation": point[2]})
+    return wgs_path
+
+
+def create_gpx_content(waypoints_data, creator_name="YAML to GPX Converter"):
+    """
+    Generates the XML content for a GPX file from a list of waypoint dictionaries.
+    """
+    gpx_waypoints = []
+    for point in waypoints_data:
+        try:
+            # Create a <wpt> tag for each point
+            lat = point["latitude"]
+            lon = point["longitude"]
+            gpx_waypoints.append(f'  <wpt lat="{lat}" lon="{lon}"></wpt>')
+        except KeyError as e:
+            print(
+                f"Warning: Skipping a waypoint due to missing key: {e}", file=sys.stderr
+            )
+            continue
+
+    # Join all waypoint strings
+    waypoints_xml = "\n".join(gpx_waypoints)
+
+    # Assemble the final GPX file content using a template
+    gpx_template = f"""<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="{creator_name}">
+{waypoints_xml}
+</gpx>
+    """
+    return gpx_template.strip()
 
 
 def ways_to_shapely(ways):
