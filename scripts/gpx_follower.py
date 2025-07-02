@@ -12,21 +12,27 @@ from rclpy.action import ActionClient
 
 from geographic_msgs.msg import GeoPose
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints
+from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints, NavigateThroughPoses
 
 
 class GPXFollower(Node):
     def __init__(self, gps_file, args):
         super().__init__("gps_follower")
         self.args = args
-        if not args.use_utm:
+
+        if self.args.navigate_through_poses:
             self._action_client = ActionClient(
-                self, FollowGPSWaypoints, "follow_gps_waypoints"
+                self, NavigateThroughPoses, "navigate_through_poses"
             )
         else:
-            self._action_client = ActionClient(
-                self, FollowWaypoints, "follow_waypoints"
-            )
+            if not args.use_utm:
+                self._action_client = ActionClient(
+                    self, FollowGPSWaypoints, "follow_gps_waypoints"
+                )
+            else:
+                self._action_client = ActionClient(
+                    self, FollowWaypoints, "follow_waypoints"
+                )
 
         self.gps_file = gps_file
         if not os.path.exists(self.gps_file):
@@ -45,13 +51,18 @@ class GPXFollower(Node):
 
         # Wait for the action server to be available
         while not self._action_client.wait_for_server(timeout_sec=1.0):
-            self.get_logger().info(
-                f"Waiting for {
-                    '/follow_gps_waypoints'
-                    if not self.args.use_utm
-                    else '/follow_waypoints'
-                } action server..."
-            )
+            if self.args.navigate_through_poses:
+                self.get_logger().info(
+                    f"Waiting for /navigate_through_poses action server..."
+                )
+            else:
+                self.get_logger().info(
+                    f"Waiting for {
+                        '/follow_gps_waypoints'
+                        if not self.args.use_utm
+                        else '/follow_waypoints'
+                    } action server..."
+                )
         self.goal_handle = None
 
         self.get_logger().info("GPXFollower node initialized.")
@@ -115,11 +126,17 @@ class GPXFollower(Node):
         if not self.waypoints:
             return
 
-        if not self.args.use_utm:
-            waypoint_msg = FollowGPSWaypoints.Goal()
-            waypoint_msg.gps_poses = self.waypoints
+        if self.args.navigate_through_poses:
+            waypoint_msg = NavigateThroughPoses.Goal()
+            waypoint_msg.poses = self.waypoints
+            waypoint_msg.behavior_tree = "MainTree"         # TODO: could be wrong, taken from VP config   
         else:
-            waypoint_msg = FollowWaypoints.Goal()
+            if not self.args.use_utm:
+                waypoint_msg = FollowGPSWaypoints.Goal()
+                waypoint_msg.gps_poses = self.waypoints
+            else:
+                waypoint_msg = FollowWaypoints.Goal()
+                waypoint_msg.poses = self.waypoints
 
         self.get_logger().info(f"Sending {len(self.waypoints)} waypoints to follow")
         send_goal_future = self._action_client.send_goal_async(
@@ -179,6 +196,11 @@ def parse_args():
         "--use-utm",
         action="store_true",
         help="Convert waypoints to UTM coordinates",
+    )
+    parser.add_argument(
+        "--navigate-through-poses",
+        action="store_true",
+        help="Use action NavigateThroughPoses instead of FollowWaypoints",
     )
 
     return parser.parse_args()
