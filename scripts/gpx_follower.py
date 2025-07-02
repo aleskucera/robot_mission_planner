@@ -41,7 +41,7 @@ class GPXFollower(Node):
 
         if self.gps_file.endswith(".gpx"):
             self.parse_gpx_file()
-        elif self.gps_file.endswith(".yaml"):
+        elif self.gps_file.endswith(".yaml", ".yml"):
             self.parse_yaml_file()
         else:
             self.get_logger().error(
@@ -49,11 +49,17 @@ class GPXFollower(Node):
             )
             exit(1)
 
+        self.waypoints = self.waypoints[self.args.start :]
+        self.number_waypoints = len(self.waypoints)
+        self.get_logger().info(
+            f"Starting from waypoint index {self.args.start}, total waypoints: {self.number_waypoints}"
+        )
+
         # Wait for the action server to be available
         while not self._action_client.wait_for_server(timeout_sec=1.0):
             if self.args.navigate_through_poses:
                 self.get_logger().info(
-                    f"Waiting for /navigate_through_poses action server..."
+                    "Waiting for /navigate_through_poses action server..."
                 )
             else:
                 self.get_logger().info(
@@ -129,7 +135,9 @@ class GPXFollower(Node):
         if self.args.navigate_through_poses:
             waypoint_msg = NavigateThroughPoses.Goal()
             waypoint_msg.poses = self.waypoints
-            waypoint_msg.behavior_tree = "MainTree"         # TODO: could be wrong, taken from VP config   
+            waypoint_msg.behavior_tree = (
+                "MainTree"  # TODO: could be wrong, taken from VP config
+            )
         else:
             if not self.args.use_utm:
                 waypoint_msg = FollowGPSWaypoints.Goal()
@@ -157,11 +165,21 @@ class GPXFollower(Node):
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
         if self.args.navigate_through_poses:
-            self.get_logger().info(f"   CURRENT: pose {feedback.current_pose.pose.position} navigation time {feedback.navigation_time}")
-            self.get_logger().info(f" REMAINING: number of poses {feedback.number_of_poses_remaining}, distance: {round(feedback.distance_remaining,2)} m")            
-            self.get_logger().info(f"RECOVERIES: {feedback.number_of_recoveries}")            
+            self.get_logger().info(
+                f"   CURRENT: pose {feedback.current_pose.pose.position} navigation time {feedback.navigation_time}"
+            )
+            self.get_logger().info(
+                f" REMAINING: number of poses {feedback.number_of_poses_remaining}, distance: {round(feedback.distance_remaining, 2)} m"
+            )
+            self.get_logger().info(f"RECOVERIES: {feedback.number_of_recoveries}")
+            self.current_waypoint = (
+                self.number_waypoints - feedback.number_of_poses_remaining
+            )
         else:
-            self.get_logger().info(f"Current waypoint index: {feedback.current_waypoint}")
+            self.get_logger().info(
+                f"Current waypoint index: {feedback.current_waypoint}"
+            )
+            self.current_waypoint = feedback.current_waypoint
 
     def result_callback(self, future):
         result = future.result().result
@@ -169,7 +187,7 @@ class GPXFollower(Node):
             if result.error_msg:
                 self.get_logger().warn(f"Error message: {result.error_msg}")
             else:
-                self.get_logger().warn(f"Finished without error")
+                self.get_logger().warn("Finished without error")
         else:
             if result.missed_waypoints:
                 self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
@@ -192,6 +210,22 @@ class GPXFollower(Node):
         else:
             self.get_logger().warn("Failed to cancel goal")
 
+    def save_waypoint_index(self):
+        index_file_path = os.path.join(
+            os.path.dirname(self.gps_file),
+            "waypoint_index",
+            f"{self.get_clock().now()}.txt",
+        )
+
+        if not os.path.exists(os.path.dirname(index_file_path)):
+            os.makedirs(os.path.dirname(index_file_path))
+        with open(index_file_path, "w") as f:
+            f.write(str(self.current_waypoint))
+
+        self.get_logger().info(
+            f"Saved current waypoint index {self.current_waypoint} to {index_file_path}"
+        )
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="GPX Follower Node")
@@ -202,6 +236,9 @@ def parse_args():
         type=str,
         required=True,
         help="Path to the GPX of YAML file containing waypoints",
+    )
+    parser.add_argument(
+        "-s", "--start", type=int, default=0, help="Start index of waypoints"
     )
     parser.add_argument(
         "--use-utm",
@@ -233,6 +270,7 @@ def main(args):
         node.get_logger().info("Node interrupted by user")
     finally:
         node.cancel_goal()
+        node.save_waypoint_index()
         node.destroy_node()
 
 
