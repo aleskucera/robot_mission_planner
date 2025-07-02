@@ -24,6 +24,7 @@ class GPXFollower(Node):
             self._action_client = ActionClient(
                 self, NavigateThroughPoses, "navigate_through_poses"
             )
+            self.args.use_utm = True
         else:
             if not args.use_utm:
                 self._action_client = ActionClient(
@@ -71,7 +72,7 @@ class GPXFollower(Node):
                 )
         self.goal_handle = None
 
-        self.get_logger().info("GPXFollower node initialized.")
+        self.get_logger().info("GPSFollower node initialized.")
 
     def _convert_waypoint(self, waypoint):
         if not self.args.use_utm:
@@ -134,7 +135,7 @@ class GPXFollower(Node):
 
         if self.args.navigate_through_poses:
             waypoint_msg = NavigateThroughPoses.Goal()
-            waypoint_msg.poses = self.waypoints
+            waypoint_msg.poses.goals = self.waypoints
             waypoint_msg.behavior_tree = (
                 "MainTree"  # TODO: could be wrong, taken from VP config
             )
