@@ -156,14 +156,25 @@ class GPXFollower(Node):
 
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
-        self.get_logger().info(f"Current waypoint index: {feedback.current_waypoint}")
+        if self.args.navigate_through_poses:
+            self.get_logger().info(f"   CURRENT: pose {feedback.current_pose.pose.position} navigation time {feedback.navigation_time}")
+            self.get_logger().info(f" REMAINING: number of poses {feedback.number_of_poses_remaining}, distance: {round(feedback.distance_remaining,2)} m")            
+            self.get_logger().info(f"RECOVERIES: {feedback.number_of_recoveries}")            
+        else:
+            self.get_logger().info(f"Current waypoint index: {feedback.current_waypoint}")
 
     def result_callback(self, future):
         result = future.result().result
-        if result.missed_waypoints:
-            self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
+        if self.args.navigate_through_poses:
+            if result.error_msg:
+                self.get_logger().warn(f"Error message: {result.error_msg}")
+            else:
+                self.get_logger().warn(f"Finished without error")
         else:
-            self.get_logger().info("Successfully navigated all waypoints")
+            if result.missed_waypoints:
+                self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
+            else:
+                self.get_logger().info("Successfully navigated all waypoints")
         rclpy.shutdown()
 
     def cancel_goal(self):
