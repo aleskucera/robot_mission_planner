@@ -10,7 +10,8 @@ import rospy
 import tf2_ros
 import tf2_geometry_msgs
 
-from geometry_msgs.msg import PoseArray, PoseStamped, Pose
+from nav_msgs.msg import Path
+from geometry_msgs.msg import PoseStamped
 
 
 class GPSFollower:
@@ -21,7 +22,7 @@ class GPSFollower:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.publisher = rospy.Publisher("waypoints_path_map", PoseArray, queue_size=10)
+        self.publisher = rospy.Publisher("waypoints_path_map", Path, queue_size=10)
 
         if not os.path.exists(self.gps_file):
             rospy.logerror(f"GPS file {self.gps_file} does not exist")
@@ -108,10 +109,10 @@ class GPSFollower:
                 waypoint, transform
             )
 
-            waypoints.append(waypoint_transformed.pose)
+            waypoints.append(waypoint_transformed)
 
         rospy.loginfo(f"Sending {len(waypoints)} waypoints to follow")
-        pose_array = PoseArray()
+        pose_array = Path()
         pose_array.header.frame_id = "map"
         pose_array.header.stamp = rospy.Time.now()
         pose_array.poses = waypoints
@@ -119,7 +120,7 @@ class GPSFollower:
         self.publisher.publish(pose_array)
 
     def cancel_goal(self):
-        pose_array = PoseArray()
+        pose_array = Path()
         pose_array.header.frame_id = "map"
         pose_array.header.stamp = rospy.Time.now()
         pose_array.poses = []
