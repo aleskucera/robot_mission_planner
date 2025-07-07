@@ -5,20 +5,28 @@ import argparse
 
 import utm
 import yaml
+import json
 import gpxpy
+import requests
+
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 
+from sensor_msgs.msg import NavSatFix
 from geographic_msgs.msg import GeoPose
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints, NavigateThroughPoses
+
+# Define the server URL
+SERVER_URL = "http://45.91.169.180:5000/api/update_data"
 
 
 class GPXFollower(Node):
     def __init__(self, gps_file, args):
         super().__init__("gps_follower")
         self.args = args
+        self.data = {"robot": args.robot}
 
         if self.args.navigate_through_poses:
             self._action_client = ActionClient(
@@ -72,6 +80,13 @@ class GPXFollower(Node):
                 )
         self.goal_handle = None
 
+        self.sub_gps = self.create_subscription(
+            NavSatFix, "/gpx/fix", self.gps_callback, 10
+        )
+        self.sub_ekf = self.create_subscription(
+            NavSatFix, "/gpx/filtered", self.ekf_callback, 10
+        )
+
         self.get_logger().info("GPSFollower node initialized.")
 
     def _convert_waypoint(self, waypoint):
@@ -93,6 +108,7 @@ class GPXFollower(Node):
 
     def parse_gpx_file(self):
         waypoints = []
+        waypoints_gps = []
         try:
             with open(self.gps_file, "r") as file:
                 gpx = gpxpy.parse(file)
@@ -103,10 +119,13 @@ class GPXFollower(Node):
                     "ele": waypoint.elevation or None,
                 }
                 waypoints.append(self._convert_waypoint(point))
+                waypoints_gps.append(point)
         except Exception as e:
             self.get_logger().error(f"Error parsing GPX file: {e}")
             return []
         self.waypoints = waypoints
+        self.waypoitnts_gps = waypoints_gps
+
         if not self.waypoints:
             self.get_logger().error("No waypoints found in GPX file.")
         else:
@@ -114,6 +133,7 @@ class GPXFollower(Node):
 
     def parse_yaml_file(self):
         waypoints = []
+        waypoints_gps = []
         with open(self.gps_file, "r") as f:
             file_waypoints = yaml.safe_load(f)["waypoints"]
         for waypoint in file_waypoints:
@@ -123,7 +143,10 @@ class GPXFollower(Node):
             else:
                 point["ele"] = None
             waypoints.append(self._convert_waypoint(point))
+            waypoints_gps.append(point)
         self.waypoints = waypoints
+        self.waypoitnts_gps = waypoints_gps
+
         if not self.waypoints:
             self.get_logger().error("No waypoints found in YAML file.")
         else:
@@ -152,6 +175,46 @@ class GPXFollower(Node):
             waypoint_msg, feedback_callback=self.feedback_callback
         )
         send_goal_future.add_done_callback(self.goal_response_callback)
+
+        self.send_data_url("path")
+
+    def send_data_url(self, msg_type):
+        data = self.data
+        if msg_type == "path":
+            data["mission"] = {
+                "waypoints": self.waypoints_gps,
+                "current_waypoint_index": 0,
+            }
+            data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+        elif msg_type == "update":
+            data["mission"] = {
+                "waypoints": [],
+                "current_waypoint_index": self.current_waypoint,
+            }
+            data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+        else:
+            self.get_logger().error(f"Unknown message type: {msg_type}")
+
+        try:
+            response = requests.post(
+                SERVER_URL,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps(data),
+            )
+
+            # Check response
+            if response.status_code == 200:
+                self.get_logger().info("Data sent successfully!")
+            elif response.status_code == 202:
+                self.get_logger().warn("Failed with status: Missing path.")
+                self.send_data_url("path")
+            else:
+                self.get_logger().error(
+                    f"Failed to send data. Status code: {response.status_code}"
+                )
+
+        except requests.exceptions.RequestException as e:
+            self.get_logger().error(f"Error sending request: {e}")
 
     def goal_response_callback(self, future):
         self.goal_handle = future.result()
@@ -211,6 +274,12 @@ class GPXFollower(Node):
         else:
             self.get_logger().warn("Failed to cancel goal")
 
+    def gps_callback(self, msg):
+        self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
+
+    def ekf_callback(self, msg):
+        self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
+
     def save_waypoint_index(self):
         index_file_path = os.path.join(
             os.path.dirname(self.gps_file),
@@ -237,6 +306,9 @@ def parse_args():
         type=str,
         required=True,
         help="Path to the GPX of YAML file containing waypoints",
+    )
+    parser.add_argument(
+        "-r", "--robot", type=str, default="helhest-robot", help="Robot name"
     )
     parser.add_argument(
         "-s", "--start", type=int, default=0, help="Start index of waypoints"
