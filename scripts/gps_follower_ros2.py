@@ -51,7 +51,7 @@ class GPXFollower(Node):
 
         if self.gps_file.endswith(".gpx"):
             self.parse_gpx_file()
-        elif self.gps_file.endswith(".yaml", ".yml"):
+        elif self.gps_file.endswith((".yaml", ".yml")):
             self.parse_yaml_file()
         else:
             self.get_logger().error(
@@ -69,6 +69,7 @@ class GPXFollower(Node):
         self.current_waypoint = 0
         self.pose_gps = None
         self.pose_ekf = None
+        self.path_send_url = False
         self.get_logger().info(
             f"Starting from waypoint index {self.args.start}, total waypoints: {self.number_waypoints}"
         )
@@ -125,10 +126,10 @@ class GPXFollower(Node):
                 point = {
                     "lat": waypoint.latitude,
                     "lon": waypoint.longitude,
-                    "ele": waypoint.elevation or None,
                 }
-                waypoints.append(self._convert_waypoint(point))
                 waypoints_gps.append(point)
+                point["ele"] = waypoint.elevation or None
+                waypoints.append(self._convert_waypoint(point))
         except Exception as e:
             self.get_logger().error(f"Error parsing GPX file: {e}")
             return []
@@ -147,12 +148,12 @@ class GPXFollower(Node):
             file_waypoints = yaml.safe_load(f)["waypoints"]
         for waypoint in file_waypoints:
             point = {"lat": waypoint["latitude"], "lon": waypoint["longitude"]}
+            waypoints_gps.append(point)
             if "elevation" in waypoint:
                 point["ele"] = waypoint["elevation"]
             else:
                 point["ele"] = None
             waypoints.append(self._convert_waypoint(point))
-            waypoints_gps.append(point)
         self.waypoints = waypoints
         self.waypoints_gps = waypoints_gps
 
@@ -164,8 +165,6 @@ class GPXFollower(Node):
     def send_path(self):
         if not self.waypoints:
             return
-
-        self.send_data_url("path")
 
         if self.args.navigate_through_poses:
             waypoint_msg = NavigateThroughPoses.Goal()
@@ -192,7 +191,7 @@ class GPXFollower(Node):
         if msg_type == "path":
             data["mission"] = {
                 "waypoints": self.waypoints_gps,
-                "current_waypoint_index": 0,
+                "current_waypoint_index": self.current_waypoint,
             }
             if self.pose_gps and self.pose_ekf:
                 data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
@@ -292,9 +291,15 @@ class GPXFollower(Node):
 
     def gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
+        if not self.path_send_url and self.pose_ekf:
+            self.send_data_url("path")
+            self.path_send_url = True
 
     def ekf_callback(self, msg):
         self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
+        if not self.path_send_url and self.pose_gps:
+            self.send_data_url("path")
+            self.path_send_url = True
 
     def save_waypoint_index(self):
         index_file_path = os.path.join(
