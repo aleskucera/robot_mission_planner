@@ -58,7 +58,12 @@ class GPXFollower(Node):
             )
             exit(1)
 
+        if self.args.reverse:
+            self.waypoints.reverse()
+            self.waypoints_gps.reverse()
         self.waypoints = self.waypoints[self.args.start :]
+        self.waypoints_gps = self.waypoints_gps[self.args.start :]
+
         self.number_waypoints = len(self.waypoints)
         self.get_logger().info(
             f"Starting from waypoint index {self.args.start}, total waypoints: {self.number_waypoints}"
@@ -312,6 +317,9 @@ def parse_args():
     )
     parser.add_argument(
         "-s", "--start", type=int, default=0, help="Start index of waypoints"
+    )
+    parser.add_argument(
+        "--reverse", action="store_true", help="Reverse the order of waypoints"
     )
     parser.add_argument(
         "--use-utm",
