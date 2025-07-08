@@ -22,7 +22,7 @@ from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import Point, Vector3, TransformStamped
 
 # Define the server URL
-SERVER_URL = "http://45.91.169.180:5000/api/update_data"
+SERVER_URL = "http://45.91.169.180:5001/api/update_data"
 
 
 class GPSFollower:
@@ -36,6 +36,7 @@ class GPSFollower:
 
         self.waypoint_dist = rospy.get_param("~waypoint_dist", 2.5)
         self.tolerance = rospy.get_param("~tolerance", 32)
+        self.target_frame = rospy.get_param("~target_frame", "map")
         self.get_plan = None
         self.wait_for_get_plan()
 
@@ -162,7 +163,7 @@ class GPSFollower:
 
             rospy.loginfo("Sending %s waypoints to follow", len(waypoints))
             pose_array = Path()
-            pose_array.header.frame_id = "map"
+            pose_array.header.frame_id = self.target_frame
             pose_array.header.stamp = rospy.Time.now()
             pose_array.poses = waypoints
 
@@ -187,18 +188,28 @@ class GPSFollower:
             # Create goal pose
             goal = PoseStamped()
             goal.header.stamp = rospy.Time.now()
-            goal.header.frame_id = "map"
+            goal.header.frame_id = self.target_frame
             goal.pose.position = Point(*target_point)
             goal.pose.orientation.w = 1
 
             # Create start pose
             start = PoseStamped()
             start.header.stamp = rospy.Time.now()
-            start.header.frame_id = "map"
+            start.header.frame_id = self.target_frame
             start.pose.position = Point(
                 float("nan"), float("nan"), float("nan")
             )  # Use current position
             start.pose.orientation.w = 1
+
+            try:
+                res = self.get_plan(start, goal, self.tolerance)
+            except rospy.ServiceException as e:
+                rospy.logerr("GetPlan service failed: %s", e)
+                self.get_plan = None
+                return
+
+            if len(res.plan.poses) == 0:
+                rospy.logw
 
         self.send_data_url("path")
 
@@ -242,7 +253,7 @@ class GPSFollower:
 
     def cancel_goal(self):
         pose_array = Path()
-        pose_array.header.frame_id = "map"
+        pose_array.header.frame_id = self.target_frame
         pose_array.header.stamp = rospy.Time.now()
         pose_array.poses = []
 
@@ -263,14 +274,14 @@ class GPSFollower:
         # Create goal pose
         goal = PoseStamped()
         goal.header.stamp = rospy.Time.now()
-        goal.header.frame_id = "map"
+        goal.header.frame_id = self.target_frame
         goal.pose.position = Point(*target_point)
         goal.pose.orientation.w = 1
 
         # Create start pose
         start = PoseStamped()
         start.header.stamp = rospy.Time.now()
-        start.header.frame_id = "map"
+        start.header.frame_id = self.target_frame
         start.pose.position = Point(
             float("nan"), float("nan"), float("nan")
         )  # Use current position
