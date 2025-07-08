@@ -34,7 +34,7 @@ class GPSFollower:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.waypoint_dist = rospy.get_param("~waypoint_dist", 2.5)
+        self.waypoint_dist = rospy.get_param("~waypoint_dist", 1.5)
         self.tolerance = rospy.get_param("~tolerance", 32)
         self.target_frame = rospy.get_param("~target_frame", "map")
         self.get_plan = None
@@ -332,7 +332,7 @@ def main(args):
 
     rospy.init_node("gps_follower", anonymous=True)
     gps_follower = GPSFollower(gpx_file_path, args)
-    gps_follower.send_test_path()
+    # gps_follower.send_test_path()
     # try:
     #     rospy.spin()
     # except KeyboardInterrupt:

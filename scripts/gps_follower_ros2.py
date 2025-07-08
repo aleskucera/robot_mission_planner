@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import time
 import argparse
 
 import utm
@@ -26,7 +27,7 @@ class GPXFollower(Node):
     def __init__(self, gps_file, args):
         super().__init__("gps_follower")
         self.args = args
-        self.data = {"robot": args.robot}
+        self.data = {"robot_id": args.robot}
 
         if self.args.navigate_through_poses:
             self._action_client = ActionClient(
@@ -65,6 +66,9 @@ class GPXFollower(Node):
         self.waypoints_gps = self.waypoints_gps[self.args.start :]
 
         self.number_waypoints = len(self.waypoints)
+        self.current_waypoint = 0
+        self.pose_gps = None
+        self.pose_ekf = None
         self.get_logger().info(
             f"Starting from waypoint index {self.args.start}, total waypoints: {self.number_waypoints}"
         )
@@ -86,10 +90,10 @@ class GPXFollower(Node):
         self.goal_handle = None
 
         self.sub_gps = self.create_subscription(
-            NavSatFix, "/gpx/fix", self.gps_callback, 10
+            NavSatFix, "/gps/fix", self.gps_callback, 10
         )
         self.sub_ekf = self.create_subscription(
-            NavSatFix, "/gpx/filtered", self.ekf_callback, 10
+            NavSatFix, "/gps/filtered", self.ekf_callback, 10
         )
 
         self.get_logger().info("GPSFollower node initialized.")
@@ -129,7 +133,7 @@ class GPXFollower(Node):
             self.get_logger().error(f"Error parsing GPX file: {e}")
             return []
         self.waypoints = waypoints
-        self.waypoitnts_gps = waypoints_gps
+        self.waypoints_gps = waypoints_gps
 
         if not self.waypoints:
             self.get_logger().error("No waypoints found in GPX file.")
@@ -150,7 +154,7 @@ class GPXFollower(Node):
             waypoints.append(self._convert_waypoint(point))
             waypoints_gps.append(point)
         self.waypoints = waypoints
-        self.waypoitnts_gps = waypoints_gps
+        self.waypoints_gps = waypoints_gps
 
         if not self.waypoints:
             self.get_logger().error("No waypoints found in YAML file.")
@@ -160,6 +164,8 @@ class GPXFollower(Node):
     def send_path(self):
         if not self.waypoints:
             return
+
+        self.send_data_url("path")
 
         if self.args.navigate_through_poses:
             waypoint_msg = NavigateThroughPoses.Goal()
@@ -181,8 +187,6 @@ class GPXFollower(Node):
         )
         send_goal_future.add_done_callback(self.goal_response_callback)
 
-        self.send_data_url("path")
-
     def send_data_url(self, msg_type):
         data = self.data
         if msg_type == "path":
@@ -190,13 +194,18 @@ class GPXFollower(Node):
                 "waypoints": self.waypoints_gps,
                 "current_waypoint_index": 0,
             }
-            data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+            if self.pose_gps and self.pose_ekf:
+                data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+            else:
+                data["position"] = {"gps": [], "ekf": []}
         elif msg_type == "update":
             data["mission"] = {
-                "waypoints": [],
                 "current_waypoint_index": self.current_waypoint,
             }
-            data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+            if self.pose_gps and self.pose_ekf:
+                data["position"] = {"gps": self.pose_gps, "ekf": self.pose_ekf}
+            else:
+                data["position"] = {"gps": [], "ekf": []}
         else:
             self.get_logger().error(f"Unknown message type: {msg_type}")
 
@@ -217,6 +226,7 @@ class GPXFollower(Node):
                 self.get_logger().error(
                     f"Failed to send data. Status code: {response.status_code}"
                 )
+                self.get_logger().error(response.text)
 
         except requests.exceptions.RequestException as e:
             self.get_logger().error(f"Error sending request: {e}")
@@ -232,6 +242,7 @@ class GPXFollower(Node):
         result_future.add_done_callback(self.result_callback)
 
     def feedback_callback(self, feedback_msg):
+        self.send_data_url("update")
         feedback = feedback_msg.feedback
         if self.args.navigate_through_poses:
             self.get_logger().info(
@@ -344,6 +355,7 @@ def main(args):
 
     rclpy.init()
     node = GPXFollower(gpx_file_path, args)
+    time.sleep(1)
     try:
         node.send_path()
         rclpy.spin(node)
