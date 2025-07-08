@@ -34,7 +34,7 @@ class GPSFollower:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
-        self.waypoint_dist = rospy.get_param("~waypoint_dist", 1.5)
+        self.waypoint_dist = rospy.get_param("~waypoint_dist", 2.0)
         self.tolerance = rospy.get_param("~tolerance", 32)
         self.target_frame = rospy.get_param("~target_frame", "map")
         self.get_plan = None
@@ -53,7 +53,7 @@ class GPSFollower:
 
         if self.gps_file.endswith(".gpx"):
             self.parse_gpx_file()
-        elif self.gps_file.endswith(".yaml", ".yml"):
+        elif self.gps_file.endswith((".yaml", ".yml")):
             self.parse_yaml_file()
         else:
             rospy.logerror(
@@ -169,17 +169,9 @@ class GPSFollower:
 
             self.publisher.publish(pose_array)
         else:
-            curr_pos = utm.from_latlon(self.pose_ekf["lat"], self.pose_ekf["lon"])[:2]
-            curr_way = (
-                waypoints[self.current_waypoint].pose.position.x,
-                waypoints[self.current_waypoint].pose.position.y,
-            )
-            dist = np.linalg.norm(curr_pos - curr_way)
-            rospy.loginfo("Distance to current waypoint: %s", dist)
-            if dist < self.waypoint_dist:
-                self.current_waypoint += 1
-            if self.current_waypoint >= len(waypoints):
-                rospy.loginfo("Reached the last waypoint.")
+            if not self.new_waypoint:
+                return
+            self.new_waypoint = False
             waypoint_transformed = tf2_geometry_msgs.do_transform_pose(
                 waypoints[self.current_waypoint], transform
             )
@@ -267,6 +259,18 @@ class GPSFollower:
 
     def ekf_callback(self, msg):
         self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
+        curr_way = (
+            self.waypoints[self.current_waypoint].pose.position.x,
+            self.waypoints[self.current_waypoint].pose.position.y,
+        )
+        curr_pos = utm.from_latlon(self.pose_ekf["lat"], self.pose_ekf["lon"])[:2]
+        dist = np.linalg.norm(curr_pos - curr_way)
+        rospy.loginfo("Distance to current waypoint: %s", dist)
+        if dist < self.waypoint_dist:
+            self.current_waypoint += 1
+            self.new_waypoint = True
+        if self.current_waypoint >= len(self.waypoints):
+            rospy.loginfo("Reached the last waypoint.")
 
     def send_test_path(self):
         target_point = [3.0, 0.0, 0.0]
