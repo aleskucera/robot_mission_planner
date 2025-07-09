@@ -42,10 +42,10 @@ class GPSFollower:
 
         self.publisher = rospy.Publisher("waypoints_route", Path, queue_size=10)
         self.end_point_pub = rospy.Publisher("/end_point", PoseStamped, queue_size=1)
-        self.sub_index = rospy.Subscriber("/gpx/fix", Int32, self.index_callback, 10)
-        self.sub_gps = rospy.Subscriber("/gpx/fix", NavSatFix, self.gps_callback, 10)
+        # self.sub_index = rospy.Subscriber("/gps/fix", Int32, self.index_callback, 10)
+        self.sub_gps = rospy.Subscriber("/gps/fix", NavSatFix, self.gps_callback, 10)
         self.sub_ekf = rospy.Subscriber(
-            "/gpx/filtered", NavSatFix, self.ekf_callback, 10
+            "/gps/filtered", NavSatFix, self.ekf_callback, 10
         )
 
         self.pose_gps = None
@@ -114,10 +114,10 @@ class GPSFollower:
                 point = {
                     "lat": waypoint.latitude,
                     "lon": waypoint.longitude,
-                    "ele": waypoint.elevation or None,
                 }
-                waypoints.append(self._convert_waypoint(point))
                 waypoints_gps.append(point)
+                point["ele"] = waypoint.elevation or None
+                waypoints.append(self._convert_waypoint(point))
         except Exception as e:
             rospy.logerror("Error parsing GPX file: %s", e)
             return []
@@ -136,12 +136,12 @@ class GPSFollower:
             file_waypoints = yaml.safe_load(f)["waypoints"]
         for waypoint in file_waypoints:
             point = {"lat": waypoint["latitude"], "lon": waypoint["longitude"]}
+            waypoints_gps.append(point)
             if "elevation" in waypoint:
                 point["ele"] = waypoint["elevation"]
             else:
                 point["ele"] = None
             waypoints.append(self._convert_waypoint(point))
-            waypoints_gps.append(point)
         self.waypoints = waypoints
         self.waypoints_gps = waypoints_gps
 
@@ -292,6 +292,7 @@ class GPSFollower:
 
     def ekf_callback(self, msg):
         self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
+
         curr_pos = utm.from_latlon(self.pose_ekf["lat"], self.pose_ekf["lon"])[:2]
         curr_way = (
             self.waypoints[self.current_waypoint].pose.position.x,
