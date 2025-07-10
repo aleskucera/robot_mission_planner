@@ -41,11 +41,13 @@ class GPSFollower:
         self.wait_for_get_plan()
 
         self.publisher = rospy.Publisher("waypoints_route", Path, queue_size=10)
-        self.end_point_pub = rospy.Publisher("/end_point", PoseStamped, queue_size=1)
-        # self.sub_index = rospy.Subscriber("/gps/fix", Int32, self.index_callback, 10)
-        self.sub_gps = rospy.Subscriber("/gps/fix", NavSatFix, self.gps_callback, 10)
+        self.end_point_pub = rospy.Publisher("end_point", PoseStamped, queue_size=1)
+        # self.sub_index = rospy.Subscriber("", Int32, self.index_callback, 10)  # TODO:
+        self.sub_gps = rospy.Subscriber(
+            "gnss/septentrio/raw/fix", NavSatFix, self.gps_callback, queue_size=10
+        )
         self.sub_ekf = rospy.Subscriber(
-            "/gps/filtered", NavSatFix, self.ekf_callback, 10
+            "gps/filtered", NavSatFix, self.ekf_callback, queue_size=10
         )
 
         self.pose_gps = None
@@ -185,6 +187,11 @@ class GPSFollower:
             if not self.new_waypoint:
                 return
             self.new_waypoint = False
+            if self.args.waypoint_sleep != 0.0:
+                rospy.loginfo(
+                    "Waypoint reached, waiting for %s seconds to localize robot"
+                )
+                rospy.sleep(self.args.waypoint_sleep)
 
             rospy.loginfo(
                 "point "
@@ -201,6 +208,7 @@ class GPSFollower:
                 waypoint_transformed.pose.position.y,
                 0,
             )
+
             # Create goal pose
             goal = PoseStamped()
             goal.header.stamp = rospy.Time.now()
@@ -294,9 +302,11 @@ class GPSFollower:
         self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
 
         curr_pos = utm.from_latlon(self.pose_ekf["lat"], self.pose_ekf["lon"])[:2]
-        curr_way = (
-            self.waypoints[self.current_waypoint].pose.position.x,
-            self.waypoints[self.current_waypoint].pose.position.y,
+        curr_way = np.array(
+            (
+                self.waypoints[self.current_waypoint].pose.position.x,
+                self.waypoints[self.current_waypoint].pose.position.y,
+            )
         )
         dist = np.linalg.norm(curr_pos - curr_way)
         rospy.loginfo("Distance to current waypoint: %s", dist)
@@ -358,6 +368,12 @@ def parse_args():
     parser.add_argument(
         "--reverse", action="store_true", help="Reverse the order of waypoints"
     )
+    parser.add_argument(
+        "--waypoint_sleep",
+        type=float,
+        default=0,
+        help="Wait time on each waypoint, before moving to the next",
+    )
 
     return parser.parse_args()
 
@@ -371,12 +387,6 @@ def main(args):
 
     rospy.init_node("gps_follower", anonymous=True)
     gps_follower = GPSFollower(gpx_file_path, args)
-    # gps_follower.send_test_path()
-    # try:
-    #    rospy.spin()
-    # except KeyboardInterrupt:
-    #    rospy.loginfo("Shutting down GPS Follower node")
-    #    gps_follower.cancel_goal()
     while not rospy.is_shutdown():
         gps_follower.send_path()
         rospy.sleep(1.0)
