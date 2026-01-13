@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>    
+  <arg name="file" default="kn_demo_dense.gpx" />
+  <arg name="navigate_through_poses" default="false" />
+  <node pkg="robot_mission_planner" exec="gps_follower_ros2" name="gps_follower_ros2" namespace="">
+      <param name="file" value="$(var file)" />         <!--Path to the GPX of YAML file containing waypoints-->
+      <param name="robot" value="helhest-robot" />      <!--For the web app-->
+      <param name="start" value="0" />                  <!--Start index of waypoints-->
+      <param name="reverse" value="false" />            <!--Reverse the order of waypoints-->
+      <param name="loop" value="true" />                <!--When finished send the same path again (if failure, start from the last waypoint)-->
+      <param name="use_utm" value="false" />            <!--Convert waypoints to UTM coordinates-->
+      <param name="navigate_through_poses" value="$(var navigate_through_poses)" /> <!--not tested yet-->
+  </node>
+
+</launch>
