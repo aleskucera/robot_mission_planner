@@ -75,7 +75,7 @@ class GPXFollower(Node):
                 self._action_client = ActionClient(
                     self, FollowWaypoints, "follow_waypoints"
                 )
-        
+
         if self.gps_file == "":
             self.get_logger().error("GPS file not specified")
             exit(1)
@@ -99,7 +99,7 @@ class GPXFollower(Node):
         if self.reverse:
             self.waypoints.reverse()
             self.waypoints_gps.reverse()
-        
+
         self.waypoints = self.waypoints[self.start :]
         self.waypoints_gps = self.waypoints_gps[self.start :]
 
@@ -113,19 +113,9 @@ class GPXFollower(Node):
         )
 
         # Wait for the action server to be available
+        server_name = self.resolve_topic_name(self._action_client._action_name)
         while not self._action_client.wait_for_server(timeout_sec=1.0):
-            if self.navigate_through_poses:
-                self.get_logger().info(
-                    "Waiting for /navigate_through_poses action server..."
-                )
-            else:
-                self.get_logger().info(
-                    f"Waiting for {
-                        '/follow_gps_waypoints'
-                        if not self.use_utm
-                        else '/follow_waypoints'
-                    } action server..."
-                )
+            self.get_logger().info(f"Waiting for {server_name} action server...")
         self.goal_handle = None
 
         self.sub_gps = self.create_subscription(
@@ -304,21 +294,28 @@ class GPXFollower(Node):
         if self.navigate_through_poses:
             if result.error_msg:
                 self.get_logger().warn(f"Error message: {result.error_msg}")
-                if self.loop:
+                if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
                     self.send_path(self.waypoints[self.current_waypoint:])
+                    return
             else:
                 self.get_logger().warn("Finished without error")
         else:
             if result.missed_waypoints:
                 self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
-                if self.loop:
+                if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
                     self.send_path(self.waypoints[self.current_waypoint:])
+                    return
             else:
                 self.get_logger().info("Successfully navigated all waypoints")
         if self.loop:
             self.current_waypoint = 0
+            # workaround for https://github.com/ros-navigation/navigation2/issues/4304
+            # rotate the waypoints by 1
+            if self.navigate_through_poses:
+                self.waypoints.append(self.waypoints.pop(0))
+                self.waypoints_gps.append(self.waypoints_gps.pop(0))
             self.send_path(self.waypoints)
         else:
             rclpy.shutdown()
