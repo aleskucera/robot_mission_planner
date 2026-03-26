@@ -23,7 +23,8 @@ setup(
  tests_require=['pytest'],
  entry_points={
      'console_scripts': [
-             'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main'
+             'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main',
+             'road_follower = robot_mission_planner.road_follower:main',
      ],
    },
 )
