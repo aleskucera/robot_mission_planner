@@ -190,6 +190,22 @@ class GPXFollower(Node):
         else:
             self.get_logger().info(f"Parsed {len(waypoints)} waypoints from YAML file.")
 
+
+    # def create_pose(self, x, y):
+    #     pose = PoseStamped()
+    #     pose.header.frame_id = 'local_odom'
+    #     pose.header.stamp = self.get_clock().now().to_msg()
+
+    #     pose.pose.position.x = float(x)
+    #     pose.pose.position.y = float(y)
+    #     pose.pose.position.z = 0.0
+
+    #     # Neutral orientation (yaw = 0)
+    #     pose.pose.orientation.w = 1.0
+
+    #     return pose
+    
+
     def send_path(self, waypoints):
         if not waypoints:
             return
@@ -197,6 +213,14 @@ class GPXFollower(Node):
         if self.navigate_through_poses:
             waypoint_msg = NavigateThroughPoses.Goal()
             waypoint_msg.poses.goals = waypoints
+            waypoint_msg.poses.header.frame_id = "utm"
+            waypoint_msg.poses.header.stamp = self.get_clock().now().to_msg()
+            # self.get_logger().info(f"{waypoint_msg}")
+            # self.get_logger().info(f"{waypoint_msg.poses}")
+            # self.get_logger().info(f"{waypoint_msg.poses.goals}")
+            # self.get_logger().info(f"{type(waypoint_msg)}")
+            # self.get_logger().info(f"{type(waypoint_msg.poses)}")
+            # self.get_logger().info(f"{type(waypoint_msg.poses.goals)}")
             # waypoint_msg.behavior_tree = (
             #     "MainTree"  # TODO: could be wrong, taken from VP config
             # )
@@ -207,6 +231,14 @@ class GPXFollower(Node):
             else:
                 waypoint_msg = FollowWaypoints.Goal()
                 waypoint_msg.poses = waypoints
+
+        # waypoints = [
+        #     self.create_pose(3.0, 0.0),
+        #     self.create_pose(5.0, 0.0),
+        #     self.create_pose(7.0, 0.0),
+        # ]
+        # waypoint_msg = FollowGPSWaypoints.Goal()
+        # waypoint_msg.gps_poses = waypoints
 
         self.get_logger().info(f"Sending {len(waypoints)} waypoints to follow")
         send_goal_future = self._action_client.send_goal_async(
@@ -314,8 +346,8 @@ class GPXFollower(Node):
             # workaround for https://github.com/ros-navigation/navigation2/issues/4304
             # rotate the waypoints by 1
             if self.navigate_through_poses:
-                self.waypoints.append(self.waypoints.pop(0))
-                self.waypoints_gps.append(self.waypoints_gps.pop(0))
+                self.waypoints.insert(0, self.waypoints.pop())
+                self.waypoints_gps.insert(0, self.waypoints_gps.pop())
             self.send_path(self.waypoints)
         else:
             rclpy.shutdown()
