@@ -3,7 +3,7 @@
 import os
 import time
 import argparse
-import copy 
+import copy
 
 import utm
 import yaml
@@ -36,24 +36,12 @@ class GPXFollower(Node):
         self.declare_parameter("use_utm", False)
         self.declare_parameter("navigate_through_poses", False)
 
-        self.gps_file = (
-            self.get_parameter("file").get_parameter_value().string_value
-        )
-        self.robot = (
-            self.get_parameter("robot").get_parameter_value().string_value
-        )
-        self.start = (
-            self.get_parameter("start").get_parameter_value().integer_value
-        )
-        self.reverse = (
-            self.get_parameter("reverse").get_parameter_value().bool_value
-        )
-        self.loop = (
-            self.get_parameter("loop").get_parameter_value().bool_value
-        )
-        self.use_utm = (
-            self.get_parameter("use_utm").get_parameter_value().bool_value
-        )
+        self.gps_file = self.get_parameter("file").get_parameter_value().string_value
+        self.robot = self.get_parameter("robot").get_parameter_value().string_value
+        self.start = self.get_parameter("start").get_parameter_value().integer_value
+        self.reverse = self.get_parameter("reverse").get_parameter_value().bool_value
+        self.loop = self.get_parameter("loop").get_parameter_value().bool_value
+        self.use_utm = self.get_parameter("use_utm").get_parameter_value().bool_value
         self.navigate_through_poses = (
             self.get_parameter("navigate_through_poses").get_parameter_value().bool_value
         )
@@ -61,20 +49,16 @@ class GPXFollower(Node):
         self.data = {"robot_id": self.robot}
 
         if self.navigate_through_poses:
-            self._action_client = ActionClient(
-                self, NavigateThroughPoses, "navigate_through_poses"
+            self._action_client = ActionClient(self, NavigateThroughPoses, "navigate_through_poses")
+            self.get_logger().error(
+                "Running with navigate_through_poses has not been tested out yet... so beware..."
             )
-            self.get_logger().error("Running with navigate_through_poses has not been tested out yet... so beware...")
-            self.use_utm = True # TODO: WHAT DOES THIS DO? WHY IS IT HERE?
+            self.use_utm = True  # TODO: WHAT DOES THIS DO? WHY IS IT HERE?
         else:
             if not self.use_utm:
-                self._action_client = ActionClient(
-                    self, FollowGPSWaypoints, "follow_gps_waypoints"
-                )
+                self._action_client = ActionClient(self, FollowGPSWaypoints, "follow_gps_waypoints")
             else:
-                self._action_client = ActionClient(
-                    self, FollowWaypoints, "follow_waypoints"
-                )
+                self._action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
 
         if self.gps_file == "":
             self.get_logger().error("GPS file not specified")
@@ -91,9 +75,7 @@ class GPXFollower(Node):
         elif self.gps_file.endswith((".yaml", ".yml")):
             self.parse_yaml_file()
         else:
-            self.get_logger().error(
-                "Unsupported file format. Please provide a .gpx or .yaml file."
-            )
+            self.get_logger().error("Unsupported file format. Please provide a .gpx or .yaml file.")
             exit(1)
 
         if self.reverse:
@@ -118,12 +100,8 @@ class GPXFollower(Node):
             self.get_logger().info(f"Waiting for {server_name} action server...")
         self.goal_handle = None
 
-        self.sub_gps = self.create_subscription(
-            NavSatFix, "/gps/fix", self.gps_callback, 10
-        )
-        self.sub_ekf = self.create_subscription(
-            NavSatFix, "/gps/filtered", self.ekf_callback, 10
-        )
+        self.sub_gps = self.create_subscription(NavSatFix, "/gps/fix", self.gps_callback, 10)
+        self.sub_ekf = self.create_subscription(NavSatFix, "/gps/filtered", self.ekf_callback, 10)
 
         self.get_logger().info("GPSFollower node initialized.")
 
@@ -190,7 +168,6 @@ class GPXFollower(Node):
         else:
             self.get_logger().info(f"Parsed {len(waypoints)} waypoints from YAML file.")
 
-
     # def create_pose(self, x, y):
     #     pose = PoseStamped()
     #     pose.header.frame_id = 'local_odom'
@@ -204,7 +181,6 @@ class GPXFollower(Node):
     #     pose.pose.orientation.w = 1.0
 
     #     return pose
-    
 
     def send_path(self, waypoints):
         if not waypoints:
@@ -283,9 +259,7 @@ class GPXFollower(Node):
                 self.get_logger().warn("Failed with status: Missing path.")
                 self.send_data_url("path")
             else:
-                self.get_logger().error(
-                    f"Failed to send data. Status code: {response.status_code}"
-                )
+                self.get_logger().error(f"Failed to send data. Status code: {response.status_code}")
                 self.get_logger().error(response.text)
 
         except requests.exceptions.RequestException as e:
@@ -306,15 +280,17 @@ class GPXFollower(Node):
         feedback = feedback_msg.feedback
         if self.navigate_through_poses:
             self.get_logger().info(
-                f"   CURRENT: pose {feedback.current_pose.pose.position} navigation time {feedback.navigation_time}", throttle_duration_sec=1
+                f"   CURRENT: pose {feedback.current_pose.pose.position} navigation time {feedback.navigation_time}",
+                throttle_duration_sec=1,
             )
             self.get_logger().info(
-                f" REMAINING: number of poses {feedback.number_of_poses_remaining}, distance: {round(feedback.distance_remaining, 2)} m", throttle_duration_sec=1
+                f" REMAINING: number of poses {feedback.number_of_poses_remaining}, distance: {round(feedback.distance_remaining, 2)} m",
+                throttle_duration_sec=1,
             )
-            self.get_logger().info(f"RECOVERIES: {feedback.number_of_recoveries}", throttle_duration_sec=1)
-            self.current_waypoint = (
-                self.number_waypoints - feedback.number_of_poses_remaining
+            self.get_logger().info(
+                f"RECOVERIES: {feedback.number_of_recoveries}", throttle_duration_sec=1
             )
+            self.current_waypoint = self.number_waypoints - feedback.number_of_poses_remaining
         else:
             self.get_logger().info(
                 f"Current waypoint index: {feedback.current_waypoint}", throttle_duration_sec=1
@@ -328,7 +304,7 @@ class GPXFollower(Node):
                 self.get_logger().warn(f"Error message: {result.error_msg}")
                 if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
-                    self.send_path(self.waypoints[self.current_waypoint:])
+                    self.send_path(self.waypoints[self.current_waypoint :])
                     return
             else:
                 self.get_logger().warn("Finished without error")
@@ -337,7 +313,7 @@ class GPXFollower(Node):
                 self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
                 if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
-                    self.send_path(self.waypoints[self.current_waypoint:])
+                    self.send_path(self.waypoints[self.current_waypoint :])
                     return
             else:
                 self.get_logger().info("Successfully navigated all waypoints")
@@ -394,6 +370,7 @@ class GPXFollower(Node):
         self.get_logger().info(
             f"Saved current waypoint index {self.current_waypoint} to {index_file_path}"
         )
+
 
 def main():
     rclpy.init()

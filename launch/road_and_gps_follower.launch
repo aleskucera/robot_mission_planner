@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Path to the GPX or YAML file containing waypoints (relative to robot_mission_planner/data) -->
+  <arg name="gps_file" default="milicovsky_haj_cesta.gpx" />
+  <arg name="use_utm" default="true" />
+  <arg name="robot_id" default="helhest-robot" />
+
+  <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" output="screen">
+      <!-- Road Following Parameters -->
+      <param name="road_points_topic" value="/road_points" />
+
+      <!-- GPS Following Parameters -->
+      <param name="file" value="$(var gps_file)" />
+      <param name="robot_id" value="$(var robot_id)" />
+      <param name="start" value="0" />
+      <param name="reverse" value="false" />
+      <param name="loop" value="true" />
+      <param name="use_utm" value="$(var use_utm)" />
+
+      <!-- Intersection Transition Thresholds -->
+      <param name="intersection_enter_threshold" value="5.0" /> <!-- Distance (m) to switch from ROAD to GPS -->
+      <param name="intersection_exit_threshold" value="6.0" />  <!-- Distance (m) from intersection to consider switching back -->
+      <param name="gps_goal_threshold" value="4.0" />           <!-- Distance (m) to GPS waypoint to consider it reached -->
+  </node>
+</launch>
