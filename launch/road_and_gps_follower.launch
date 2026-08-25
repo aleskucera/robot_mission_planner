@@ -1,25 +1,67 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Path to the GPX or YAML file containing waypoints (relative to robot_mission_planner/data) -->
-  <arg name="gps_file" default="milicovsky_haj_cesta.gpx" />
-  <arg name="use_utm" default="true" />
+  <!-- Path to the GPX or YAML file with the pre-planned waypoints (absolute, or relative to
+       robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only"). -->
+  <arg name="gps_file" default="stromovka_planned.gpx" />
   <arg name="robot_id" default="helhest-robot" />
+  <arg name="loop" default="false" />
+
+  <!-- Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2" -->
+  <arg name="nav_backend" default="commander" />
+  <arg name="use_utm" default="true" />                  <!-- nav2 only: UTM goals vs lat/lon goals -->
+
+  <!-- Frames (Helhest/Fixposition defaults). map_frame is the fixed frame all distances are
+       measured in; earth_frame is the ECEF frame GPX waypoints are published in. -->
+  <arg name="map_frame" default="FP_ENU0" />
+  <arg name="robot_frame" default="base_link" />
+  <arg name="earth_frame" default="FP_ECEF" />
+  <arg name="utm_frame" default="utm" />                 <!-- nav2 + use_utm only -->
+
+  <!-- Topics / services -->
+  <arg name="road_points_topic" default="/predicted_path_ls" />   <!-- path_centerline/predict_path -->
+  <arg name="intersections_topic" default="/intersections" />     <!-- map_data/osm_cloud -->
+  <arg name="gps_fix_topic" default="/fixposition/odometry_llh" />
+  <arg name="goal_waypoint_topic" default="/goal_waypoint" />
+  <arg name="goal_sequence_topic" default="/goal_sequence" />
+  <arg name="commander_state_topic" default="/commander/state" />
+  <arg name="switch_mode_service" default="/crl_commander/switch_mode" />
+  <arg name="configure_sequence_service" default="/crl_commander/configure_sequence_mode" />
+
+  <!-- Thresholds -->
+  <arg name="intersection_enter_threshold" default="5.0" />  <!-- m: switch ROAD -> GPS -->
+  <arg name="intersection_exit_threshold" default="6.0" />   <!-- m: from every intersection to switch back -->
+  <arg name="gps_goal_threshold" default="4.0" />            <!-- m: waypoint / road goal reached -->
+  <arg name="road_goal_update_distance" default="1.0" />     <!-- m: min shift of the road goal to re-send it -->
+  <arg name="require_waypoint_reached_to_exit_gps" default="false" />
 
   <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" output="screen">
-      <!-- Road Following Parameters -->
-      <param name="road_points_topic" value="/road_points" />
+      <param name="nav_backend" value="$(var nav_backend)" />
+      <param name="use_utm" value="$(var use_utm)" />
 
-      <!-- GPS Following Parameters -->
+      <param name="map_frame" value="$(var map_frame)" />
+      <param name="robot_frame" value="$(var robot_frame)" />
+      <param name="earth_frame" value="$(var earth_frame)" />
+      <param name="utm_frame" value="$(var utm_frame)" />
+
+      <param name="road_points_topic" value="$(var road_points_topic)" />
+      <param name="intersections_topic" value="$(var intersections_topic)" />
+      <param name="gps_fix_topic" value="$(var gps_fix_topic)" />
+      <param name="goal_waypoint_topic" value="$(var goal_waypoint_topic)" />
+      <param name="goal_sequence_topic" value="$(var goal_sequence_topic)" />
+      <param name="commander_state_topic" value="$(var commander_state_topic)" />
+      <param name="switch_mode_service" value="$(var switch_mode_service)" />
+      <param name="configure_sequence_service" value="$(var configure_sequence_service)" />
+
       <param name="file" value="$(var gps_file)" />
       <param name="robot_id" value="$(var robot_id)" />
       <param name="start" value="0" />
       <param name="reverse" value="false" />
-      <param name="loop" value="true" />
-      <param name="use_utm" value="$(var use_utm)" />
+      <param name="loop" value="$(var loop)" />
 
-      <!-- Intersection Transition Thresholds -->
-      <param name="intersection_enter_threshold" value="5.0" /> <!-- Distance (m) to switch from ROAD to GPS -->
-      <param name="intersection_exit_threshold" value="6.0" />  <!-- Distance (m) from intersection to consider switching back -->
-      <param name="gps_goal_threshold" value="4.0" />           <!-- Distance (m) to GPS waypoint to consider it reached -->
+      <param name="intersection_enter_threshold" value="$(var intersection_enter_threshold)" />
+      <param name="intersection_exit_threshold" value="$(var intersection_exit_threshold)" />
+      <param name="gps_goal_threshold" value="$(var gps_goal_threshold)" />
+      <param name="road_goal_update_distance" value="$(var road_goal_update_distance)" />
+      <param name="require_waypoint_reached_to_exit_gps" value="$(var require_waypoint_reached_to_exit_gps)" />
   </node>
 </launch>

@@ -10,17 +10,26 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <depend>rclcpp</depend>
-  <depend>nav2_common</depend>
-  <depend>nav2_core</depend>
-  <depend>nav2_util</depend>
-  <depend>geometry_msgs</depend>
-  <depend>nav2_msgs</depend>
-  <depend>pluginlib</depend>
-  <depend>tf2</depend>
-  <depend>tf2_geometry_msgs</depend>
-  <depend>tf2_ros</depend>
-  <depend>ros2_numpy</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>geographic_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>ros2_numpy</exec_depend>
+  <!-- crl_commander provides the SwitchMode / ConfigureSequenceMode services (nav_backend=commander).
+       On the robot it is the real package in adam_ws; in a dev workspace use the interface stub. -->
+  <exec_depend>crl_commander</exec_depend>
+  <exec_depend>python3-gpxpy</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-requests</exec_depend>
+  <exec_depend>python3-utm</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
