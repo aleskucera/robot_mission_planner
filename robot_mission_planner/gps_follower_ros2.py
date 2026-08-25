@@ -21,7 +21,7 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import FollowWaypoints, FollowGPSWaypoints, NavigateThroughPoses
 
 # Define the server URL
-SERVER_URL = "http://45.91.169.180:5001/api/update_data"
+SERVER_URL = ""  # telemetry disabled; send_data_url() is a no-op
 
 
 class GPXFollower(Node):

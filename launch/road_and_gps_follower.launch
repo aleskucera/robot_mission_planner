@@ -33,6 +33,16 @@
   <arg name="gps_goal_threshold" default="4.0" />            <!-- m: waypoint / road goal reached -->
   <arg name="road_goal_update_distance" default="1.0" />     <!-- m: min shift of the road goal to re-send it -->
   <arg name="require_waypoint_reached_to_exit_gps" default="false" />
+  <arg name="gps_exit_require_passed" default="true" />       <!-- leave GPS only after passing the intersection along the route -->
+  <arg name="gps_exit_min_waypoints" default="0" />           <!-- waypoints to advance before leaving GPS mode -->
+  <arg name="gps_sequence_window" default="10" />             <!-- waypoints sent per sequence (0 = all remaining) -->
+
+  <!-- Road-goal sanity and failure handling -->
+  <arg name="road_goal_max_route_offset" default="5.0" />     <!-- m: reject road goals farther from the planned route (0 = off) -->
+  <arg name="road_goal_reject_behind" default="true" />
+  <arg name="road_path_timeout" default="5.0" />              <!-- s without a road path -> GPS fallback (0 = off) -->
+  <arg name="stuck_fallback_to_gps" default="true" />         <!-- commander STUCK while road following -> GPS fallback -->
+  <arg name="service_timeout" default="3.0" />                <!-- s: commander service call watchdog -->
 
   <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" output="screen">
       <param name="nav_backend" value="$(var nav_backend)" />
@@ -63,5 +73,13 @@
       <param name="gps_goal_threshold" value="$(var gps_goal_threshold)" />
       <param name="road_goal_update_distance" value="$(var road_goal_update_distance)" />
       <param name="require_waypoint_reached_to_exit_gps" value="$(var require_waypoint_reached_to_exit_gps)" />
+      <param name="gps_exit_require_passed" value="$(var gps_exit_require_passed)" />
+      <param name="gps_exit_min_waypoints" value="$(var gps_exit_min_waypoints)" />
+      <param name="gps_sequence_window" value="$(var gps_sequence_window)" />
+      <param name="road_goal_max_route_offset" value="$(var road_goal_max_route_offset)" />
+      <param name="road_goal_reject_behind" value="$(var road_goal_reject_behind)" />
+      <param name="road_path_timeout" value="$(var road_path_timeout)" />
+      <param name="stuck_fallback_to_gps" value="$(var stuck_fallback_to_gps)" />
+      <param name="service_timeout" value="$(var service_timeout)" />
   </node>
 </launch>

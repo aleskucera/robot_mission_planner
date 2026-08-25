@@ -6,8 +6,10 @@ State machine
 -------------
 ROAD  : follow the visually detected road (``road_points_topic``, nav_msgs/Path from
         path_centerline) by sending its last pose as the navigation goal.
-GPS   : near an OSM intersection (``intersections_topic``, geometry_msgs/PoseArray from
-        map_data/osm_cloud) follow the pre-planned GPX waypoints instead.
+GPS   : follow the pre-planned GPX waypoints instead. Entered near an OSM intersection
+        (``intersections_topic``, geometry_msgs/PoseArray from map_data/osm_cloud), when
+        the road path stops arriving (``road_path_timeout``) or when the commander reports
+        being stuck (``stuck_fallback_to_gps``).
 
 Navigation backends (``nav_backend``)
 -------------------------------------
@@ -57,6 +59,10 @@ from visualization_msgs.msg import Marker, MarkerArray
 _WGS84_A = 6378137.0
 _WGS84_E2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
 
+GPS_REASON_INTERSECTION = "intersection"
+GPS_REASON_NO_ROAD = "no_road"
+GPS_REASON_STUCK = "stuck"
+
 
 def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
     lat, lon = math.radians(lat_deg), math.radians(lon_deg)
@@ -71,6 +77,20 @@ def transform_xyz(matrix: np.ndarray, x: float, y: float, z: float = 0.0) -> tup
     """Apply a 4x4 homogeneous matrix to a point."""
     p = matrix[:3, :3] @ np.array([x, y, z]) + matrix[:3, 3]
     return float(p[0]), float(p[1]), float(p[2])
+
+
+def distance_to_polyline(point, segments_a: np.ndarray, segments_b: np.ndarray) -> float:
+    """Minimum distance from ``point`` (x, y) to the polyline given as segment endpoints."""
+    if segments_a.size == 0:
+        return float("inf")
+    p = np.asarray(point, dtype=float)
+    ab = segments_b - segments_a
+    ap = p - segments_a
+    denom = np.einsum("ij,ij->i", ab, ab)
+    t = np.where(denom > 0, np.einsum("ij,ij->i", ap, ab) / np.where(denom > 0, denom, 1.0), 0.0)
+    t = np.clip(t, 0.0, 1.0)
+    closest = segments_a + ab * t[:, None]
+    return float(np.min(np.hypot(*(p - closest).T)))
 
 
 class RoadFollower(Node):
@@ -113,7 +133,7 @@ class RoadFollower(Node):
         self.declare_parameter("reverse", False)
         self.declare_parameter("loop", True)
         self.declare_parameter("use_utm", True)  # nav2 backend only
-        self.declare_parameter("telemetry_url", "http://45.91.169.180:5001/api/update_data")
+        self.declare_parameter("telemetry_url", "")  # empty = no telemetry POSTs
 
         # --- Thresholds ---
         self.declare_parameter("intersection_enter_threshold", 3.0)  # m: ROAD -> GPS
@@ -121,9 +141,21 @@ class RoadFollower(Node):
         self.declare_parameter("gps_goal_threshold", 3.0)  # m: waypoint reached
         self.declare_parameter("lookahead_sync_window", 15)  # waypoints searched for the closest
         self.declare_parameter("road_goal_update_distance", 1.0)  # m: re-send active road goal
-        # When true, GPS -> ROAD additionally requires being within gps_goal_threshold of the
-        # current waypoint (legacy behaviour; with sparse waypoints this keeps GPS mode long).
+        # GPS -> ROAD hysteresis: require having passed the intersection along the route
+        # direction (not just a radius), and/or a number of waypoints advanced since entry.
+        self.declare_parameter("gps_exit_require_passed", True)
+        self.declare_parameter("gps_exit_min_waypoints", 0)
+        # Legacy: additionally require being within gps_goal_threshold of the current waypoint.
         self.declare_parameter("require_waypoint_reached_to_exit_gps", False)
+        # Road-goal sanity: reject goals farther than this from the planned route (0 = off)
+        # or behind the robot, so a bad segmentation cannot pull us off the mission.
+        self.declare_parameter("road_goal_max_route_offset", 5.0)
+        self.declare_parameter("road_goal_reject_behind", True)
+        # Failure handling
+        self.declare_parameter("road_path_timeout", 5.0)  # s without a road path -> GPS (0 = off)
+        self.declare_parameter("stuck_fallback_to_gps", True)  # commander STUCK in ROAD -> GPS
+        self.declare_parameter("service_timeout", 3.0)  # s: commander service call watchdog
+        self.declare_parameter("gps_sequence_window", 10)  # waypoints per sequence (0 = all)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
         self.nav_backend = gp("nav_backend")
@@ -146,7 +178,15 @@ class RoadFollower(Node):
         self.gps_threshold = gp("gps_goal_threshold")
         self.lookahead_sync_window = gp("lookahead_sync_window")
         self.road_goal_update_distance = gp("road_goal_update_distance")
+        self.gps_exit_require_passed = gp("gps_exit_require_passed")
+        self.gps_exit_min_waypoints = gp("gps_exit_min_waypoints")
         self.require_wp_to_exit = gp("require_waypoint_reached_to_exit_gps")
+        self.road_goal_max_route_offset = gp("road_goal_max_route_offset")
+        self.road_goal_reject_behind = gp("road_goal_reject_behind")
+        self.road_path_timeout = gp("road_path_timeout")
+        self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
+        self.service_timeout = gp("service_timeout")
+        self.gps_sequence_window = gp("gps_sequence_window")
 
         # --- TF ---
         self.tf_buffer = Buffer()
@@ -196,6 +236,8 @@ class RoadFollower(Node):
         self.waypoints_raw = []  # dicts lat/lon/ele
         self.waypoints = []  # backend goal messages (PoseStamped in src frame, or GeoPose)
         self.waypoints_map = []  # (x, y) in map_frame for distance checks
+        self._route_a = np.empty((0, 2))  # route polyline segments in map_frame
+        self._route_b = np.empty((0, 2))
         self.gps_path = ""
         self._load_gps_data()
 
@@ -207,6 +249,7 @@ class RoadFollower(Node):
 
         # --- Runtime state ---
         self._latest_road_path = None
+        self._last_road_path_time = None  # node clock seconds of the last road path
         self._intersections = None  # PoseArray as received
         self._intersections_map = None  # np.ndarray (N, 2) in map_frame
         self._goal_handle = None
@@ -218,6 +261,10 @@ class RoadFollower(Node):
         self._sequence_configured = False
         self._requested_mode = None  # last mode asked of the commander (state topic lags)
         self._waypoints_synced = False  # first sync searches the whole list
+        self._gps_reason = None  # why GPS mode was entered
+        self._gps_entry_index = 0  # waypoint index when GPS mode was entered
+        self._gps_route_dir = None  # unit route direction at the active intersection
+        self._service_watchdogs = []
 
         self.pose_gps = None
         self.pose_ekf = None
@@ -255,11 +302,16 @@ class RoadFollower(Node):
             f"Road topic: {gp('road_points_topic')}, intersections: {gp('intersections_topic')}, "
             f"GPS file: {self.gps_file_name}\n"
             f"Thresholds: enter={self.enter_threshold} m, exit={self.exit_threshold} m, "
-            f"waypoint={self.gps_threshold} m"
+            f"waypoint={self.gps_threshold} m, route offset={self.road_goal_max_route_offset} m, "
+            f"road path timeout={self.road_path_timeout} s"
         )
+        self._start_time = self._now()
         self.create_timer(1.0, self._main_logic_step)
 
     # ------------------------------------------------------------------ TF helpers
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
     def _lookup_matrix(self, target: str, source: str, timeout: float = 0.5):
         """4x4 matrix mapping points in ``source`` into ``target``, or None."""
         try:
@@ -285,12 +337,12 @@ class RoadFollower(Node):
             f"{self.number_waypoints} waypoints placed in {self.map_frame}"
         )
 
-    def _robot_xy(self):
-        """Robot position (x, y) in map_frame, or None."""
+    def _robot_pose(self):
+        """Robot (x, y, yaw) in map_frame, or None."""
         m = self._lookup_matrix(self.map_frame, self.robot_frame, timeout=0.2)
         if m is None:
             return None
-        return float(m[0, 3]), float(m[1, 3])
+        return float(m[0, 3]), float(m[1, 3]), float(math.atan2(m[1, 0], m[0, 0]))
 
     def _pose_to_map(self, pose: PoseStamped):
         """(x, y) of a PoseStamped in map_frame, or None."""
@@ -360,6 +412,11 @@ class RoadFollower(Node):
         self.waypoints = [self._convert_to_msg(pt) for pt in self.waypoints_raw]
         self.waypoints_map = [self._raw_to_map(pt) for pt in self.waypoints_raw]
         self.number_waypoints = len(self.waypoints)
+        xy = np.array([p for p in self.waypoints_map if p is not None], dtype=float)
+        if len(xy) >= 2:
+            self._route_a, self._route_b = xy[:-1], xy[1:]
+        else:
+            self._route_a = self._route_b = np.empty((0, 2))
 
     def _raw_to_src(self, point):
         """Waypoint in the source frame (ECEF for commander, UTM for nav2)."""
@@ -406,6 +463,21 @@ class RoadFollower(Node):
             d_lon = (self.pose_gps["lon"] - target["lon"]) * 111320 * math.cos(math.radians(target["lat"]))
             return math.hypot(d_lat, d_lon)
         return float("inf")
+
+    def _route_direction_at(self, idx):
+        """Unit vector of the route around waypoint ``idx`` in map_frame, or None."""
+        if not self.waypoints_map:
+            return None
+        n = len(self.waypoints_map)
+        i0, i1 = max(0, min(idx, n - 1)), min(n - 1, idx + 1)
+        if i0 == i1:
+            i0 = max(0, i1 - 1)
+        a, b = self.waypoints_map[i0], self.waypoints_map[i1]
+        if a is None or b is None:
+            return None
+        d = np.array([b[0] - a[0], b[1] - a[1]])
+        norm = np.linalg.norm(d)
+        return d / norm if norm > 1e-6 else None
 
     def _publish_waypoints_markers(self):
         if not self.waypoints_raw or not self._tf_ready or not self.waypoints_map:
@@ -458,6 +530,7 @@ class RoadFollower(Node):
         if not msg.poses:
             return
         self._latest_road_path = msg
+        self._last_road_path_time = self._now()
         if self.state == self.STATE_ROAD and self._road_goal_needs_update(msg):
             self._send_road_goal()
 
@@ -470,10 +543,20 @@ class RoadFollower(Node):
         moved = math.hypot(goal_xy[0] - self._last_road_goal[0], goal_xy[1] - self._last_road_goal[1])
         return moved > self.road_goal_update_distance
 
+    def _road_path_fresh(self) -> bool:
+        if self.road_path_timeout <= 0:
+            return True
+        if self._last_road_path_time is None:
+            return False
+        return (self._now() - self._last_road_path_time) < self.road_path_timeout
+
     def _commander_state_callback(self, msg):
         if msg.data != self.commander_mode:
             self.get_logger().info(f"Commander state: {msg.data}")
         self.commander_mode = msg.data
+
+    def _commander_stuck(self) -> bool:
+        return self.commander_mode is not None and "STUCK" in self.commander_mode.upper()
 
     def _gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
@@ -513,16 +596,16 @@ class RoadFollower(Node):
 
     # ------------------------------------------------------------------ state machine
     def _main_logic_step(self):
-        rob_xy = self._robot_xy()
-        if rob_xy is None:
+        pose = self._robot_pose()
+        if pose is None:
             return
+        rob_xy = pose[:2]
         # Nav2 reports the waypoint index through action feedback; the commander does not.
         if self.state == self.STATE_ROAD or self.nav_backend == "commander":
             self._sync_waypoint_index_to_closest(rob_xy)
         if self.nav_backend == "commander" and self.state == self.STATE_ROAD:
             self._check_road_goal_reached(rob_xy)
-        if self._intersections is not None:
-            self._check_state_transitions(rob_xy)
+        self._check_state_transitions(rob_xy)
 
     def _sync_waypoint_index_to_closest(self, rob_xy):
         """Move current_waypoint_index to the closest waypoint within a lookahead window."""
@@ -574,40 +657,83 @@ class RoadFollower(Node):
             self.get_logger().info(f"Road goal reached ({d:.2f} m); next path update re-sends.")
             self._goal_active = False
 
-    def _check_state_transitions(self, rob_xy):
+    def _closest_intersection(self, rob_xy):
+        """(distance, (x, y)) of the closest intersection in map_frame, or (inf, None)."""
         inter = self._intersections_in_map()
-        if self.state == self.STATE_ROAD:
-            if inter is None:
-                return
+        if inter is not None:
             d = np.hypot(inter[:, 0] - rob_xy[0], inter[:, 1] - rob_xy[1])
             i = int(np.argmin(d))
-            if d[i] < self.enter_threshold:
-                self.get_logger().info(
-                    f"Approaching intersection ({d[i]:.2f} m). Switching to GPS mode."
-                )
-                self.state = self.STATE_GPS
-                self._active_intersection = tuple(inter[i])
-                self._cancel_current_goal()
-                self._schedule_goal(delay_sec=1.0, mode="GPS")
+            return float(d[i]), (float(inter[i, 0]), float(inter[i, 1]))
+        if self._active_intersection is not None:
+            return (
+                math.hypot(rob_xy[0] - self._active_intersection[0], rob_xy[1] - self._active_intersection[1]),
+                self._active_intersection,
+            )
+        return float("inf"), None
+
+    def _check_state_transitions(self, rob_xy):
+        closest, closest_xy = self._closest_intersection(rob_xy)
+
+        if self.state == self.STATE_ROAD:
+            if closest < self.enter_threshold:
+                self._enter_gps(GPS_REASON_INTERSECTION, closest_xy, f"approaching intersection ({closest:.2f} m)")
+            elif self.stuck_fallback_to_gps and self._commander_stuck():
+                self._enter_gps(GPS_REASON_STUCK, None, "commander reports STUCK")
+            elif not self._road_path_fresh() and (self._now() - self._start_time) > self.road_path_timeout:
+                self._enter_gps(GPS_REASON_NO_ROAD, None, f"no road path for {self.road_path_timeout} s")
             return
 
-        # STATE_GPS: leave once clear of *all* nearby intersections
-        if inter is not None:
-            closest = float(np.min(np.hypot(inter[:, 0] - rob_xy[0], inter[:, 1] - rob_xy[1])))
-        elif self._active_intersection is not None:
-            closest = math.hypot(rob_xy[0] - self._active_intersection[0], rob_xy[1] - self._active_intersection[1])
-        else:
+        # STATE_GPS: decide whether to go back to road following
+        if closest < self.enter_threshold and self._gps_reason != GPS_REASON_INTERSECTION:
+            # A fallback GPS run reached an intersection: treat it as an intersection entry.
+            self._gps_reason = GPS_REASON_INTERSECTION
+            self._active_intersection = closest_xy
+            self._gps_entry_index = self.current_waypoint_index
+            self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
             return
-        if closest <= self.exit_threshold:
+
+        advanced = self.current_waypoint_index - self._gps_entry_index
+        if advanced < self.gps_exit_min_waypoints:
             return
-        if self.require_wp_to_exit and self.waypoints:
-            if self._waypoint_distance(self.current_waypoint_index, rob_xy) >= self.gps_threshold:
+
+        if self._gps_reason == GPS_REASON_INTERSECTION:
+            if closest <= self.exit_threshold:
                 return
-        self.get_logger().info(
-            f"Passed nearby intersections (closest {closest:.2f} m). Switching back to ROAD mode."
-        )
+            if self.gps_exit_require_passed and self._active_intersection is not None and self._gps_route_dir is not None:
+                rel = np.array([rob_xy[0] - self._active_intersection[0], rob_xy[1] - self._active_intersection[1]])
+                if float(rel @ self._gps_route_dir) <= 0.0:
+                    return  # still before the intersection along the route
+            if self.require_wp_to_exit and self.waypoints:
+                if self._waypoint_distance(self.current_waypoint_index, rob_xy) >= self.gps_threshold:
+                    return
+            why = f"passed intersection (closest {closest:.2f} m)"
+        elif self._gps_reason == GPS_REASON_STUCK:
+            if self._commander_stuck() or advanced < max(1, self.gps_exit_min_waypoints):
+                return
+            why = "commander no longer stuck"
+        else:  # GPS_REASON_NO_ROAD
+            if not self._road_path_fresh() or closest <= self.exit_threshold:
+                return
+            why = "road path available again"
+
+        self._enter_road(why)
+
+    def _enter_gps(self, reason, intersection_xy, why):
+        self.get_logger().info(f"{why}. Switching to GPS mode ({reason}).")
+        self.state = self.STATE_GPS
+        self._gps_reason = reason
+        self._active_intersection = intersection_xy
+        self._gps_entry_index = self.current_waypoint_index
+        self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
+        self._cancel_current_goal()
+        self._schedule_goal(delay_sec=1.0, mode="GPS")
+
+    def _enter_road(self, why):
+        self.get_logger().info(f"{why}. Switching back to ROAD mode.")
         self.state = self.STATE_ROAD
+        self._gps_reason = None
         self._active_intersection = None
+        self._gps_route_dir = None
         self._last_road_goal = None
         self._cancel_current_goal()
         self._schedule_goal(delay_sec=1.0, mode="ROAD")
@@ -638,6 +764,26 @@ class RoadFollower(Node):
             self._goal_handle = None
         self._goal_active = False
 
+    def _road_goal_valid(self, goal_xy) -> bool:
+        """Sanity-check a road goal against the planned route and the robot heading."""
+        if self.road_goal_max_route_offset > 0 and self._route_a.size:
+            off = distance_to_polyline(goal_xy, self._route_a, self._route_b)
+            if off > self.road_goal_max_route_offset:
+                self.get_logger().warn(
+                    f"Road goal rejected: {off:.1f} m off the planned route "
+                    f"(> {self.road_goal_max_route_offset} m)",
+                    throttle_duration_sec=2.0,
+                )
+                return False
+        if self.road_goal_reject_behind:
+            pose = self._robot_pose()
+            if pose is not None:
+                dx, dy = goal_xy[0] - pose[0], goal_xy[1] - pose[1]
+                if dx * math.cos(pose[2]) + dy * math.sin(pose[2]) < 0.0:
+                    self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
+                    return False
+        return True
+
     def _send_road_goal(self):
         if (
             self.state != self.STATE_ROAD
@@ -650,6 +796,8 @@ class RoadFollower(Node):
         goal_xy = self._pose_to_map(pose_stamped)
         if goal_xy is None:
             self.get_logger().warn("Road goal frame not transformable to map_frame yet; skipping.")
+            return
+        if not self._road_goal_valid(goal_xy):
             return
         self.get_logger().info(
             f"Road goal: ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) in {self.map_frame} "
@@ -673,17 +821,17 @@ class RoadFollower(Node):
     def _send_gps_goal(self):
         if self.state != self.STATE_GPS or not self.waypoints:
             return
-        rob_xy = self._robot_xy()
-        if rob_xy is not None:
-            self._sync_waypoint_index_to_closest(rob_xy)
-        remaining = self.waypoints[self.current_waypoint_index :]
+        pose = self._robot_pose()
+        if pose is not None:
+            self._sync_waypoint_index_to_closest(pose[:2])
+        start = self.current_waypoint_index
+        end = start + self.gps_sequence_window if self.gps_sequence_window > 0 else len(self.waypoints)
+        remaining = self.waypoints[start:end]
         if not remaining:
             self.get_logger().warn("No remaining GPS waypoints to send.")
             return
-        self._gps_start_index = self.current_waypoint_index
-        self.get_logger().info(
-            f"GPS goal: sending {len(remaining)} waypoints from index {self.current_waypoint_index}."
-        )
+        self._gps_start_index = start
+        self.get_logger().info(f"GPS goal: sending {len(remaining)} waypoints from index {start}.")
         self._goal_active = True
 
         if self.nav_backend == "commander":
@@ -705,6 +853,22 @@ class RoadFollower(Node):
         self.send_goal_future.add_done_callback(self._goal_response_callback)
 
     # ------------------------------------------------------------------ commander backend
+    def _watch_service_call(self, future, what, on_timeout=None):
+        """Log (and optionally react) when a service call does not return in time."""
+        if self.service_timeout <= 0:
+            return
+
+        def check():
+            timer.cancel()
+            self._service_watchdogs = [t for t in self._service_watchdogs if t is not timer]
+            if not future.done():
+                self.get_logger().error(f"{what} did not respond within {self.service_timeout} s")
+                if on_timeout:
+                    on_timeout()
+
+        timer = self.create_timer(self.service_timeout, check)
+        self._service_watchdogs.append(timer)
+
     def _publish_sequence(self, seq: PoseArray):
         self._pub_goal_sequence.publish(seq)
         self._commander_switch_mode("sequence")
@@ -726,6 +890,12 @@ class RoadFollower(Node):
         req.source = req.SOURCE_TOPIC
         req.gpx_file_name = ""
         req.loop = bool(self.loop)
+        called = {"then": False}
+
+        def run_then():
+            if not called["then"]:
+                called["then"] = True
+                then()
 
         def done(fut):
             try:
@@ -734,9 +904,11 @@ class RoadFollower(Node):
                 self._sequence_configured = bool(res.success)
             except Exception as e:
                 self.get_logger().error(f"configure_sequence_mode failed: {e}")
-            then()
+            run_then()
 
-        cli.call_async(req).add_done_callback(done)
+        future = cli.call_async(req)
+        future.add_done_callback(done)
+        self._watch_service_call(future, "configure_sequence_mode", on_timeout=run_then)
 
     def _commander_switch_mode(self, mode: str):
         # The state topic lags the request; remember what we asked for so that a burst of
@@ -754,19 +926,24 @@ class RoadFollower(Node):
         req = self._srv_types["switch"].Request()
         req.mode = mode
 
+        def reset_request():
+            if self._requested_mode == mode:
+                self._requested_mode = None  # allow a retry
+
         def done(fut):
             try:
                 res = fut.result()
                 level = self.get_logger().info if res.success else self.get_logger().error
                 level(f"switch_mode('{mode}'): {res.success} {res.message}")
-                if not res.success and self._requested_mode == mode:
-                    self._requested_mode = None  # allow a retry
+                if not res.success:
+                    reset_request()
             except Exception as e:
                 self.get_logger().error(f"switch_mode('{mode}') failed: {e}")
-                if self._requested_mode == mode:
-                    self._requested_mode = None
+                reset_request()
 
-        cli.call_async(req).add_done_callback(done)
+        future = cli.call_async(req)
+        future.add_done_callback(done)
+        self._watch_service_call(future, f"switch_mode('{mode}')", on_timeout=reset_request)
 
     # ------------------------------------------------------------------ nav2 backend
     def _goal_response_callback(self, future):
@@ -825,12 +1002,12 @@ def main():
     node = RoadFollower()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.get_logger().info("Node interrupted by user.")
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
     finally:
         node.save_waypoint_index()
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

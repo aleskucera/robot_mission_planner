@@ -19,9 +19,17 @@ GPX mission (map_data viewer "Paths only") ──────┘
 * **ROAD** state: the last pose of the road path is sent as the navigation goal, re-sent only
   when it moved more than `road_goal_update_distance` or the previous goal was reached.
 * **GPS** state: entered when the robot is within `intersection_enter_threshold` of an OSM
-  intersection; the remaining GPX waypoints are sent as a sequence. Left again once the
-  robot is farther than `intersection_exit_threshold` from every intersection (and, if
-  `require_waypoint_reached_to_exit_gps`, within `gps_goal_threshold` of the current waypoint).
+  intersection, when no road path arrived for `road_path_timeout` seconds, or when the
+  commander reports `STUCK` (`stuck_fallback_to_gps`). The next `gps_sequence_window`
+  GPX waypoints are sent as a sequence. Left again once the robot is farther than
+  `intersection_exit_threshold` from every intersection **and** has passed the
+  intersection along the route direction (`gps_exit_require_passed`), optionally after
+  `gps_exit_min_waypoints` more waypoints; fallback entries end when the road path is
+  back / the commander is no longer stuck.
+* **Road-goal sanity**: goals farther than `road_goal_max_route_offset` from the planned
+  GPX line or behind the robot (`road_goal_reject_behind`) are rejected, so a bad
+  segmentation cannot pull the robot off the mission. Commander service calls are
+  watched with `service_timeout`.
 
 Backends (`nav_backend`):
 
@@ -38,6 +46,8 @@ The `crl_commander` service types come from the real package on the robot; a dev
 uses the interface-only stub in `src/crl_commander`.
 
 ### `gps_follower_ros2` — plain GPX/YAML waypoint following through Nav2 (legacy)
+
+Telemetry POSTs are disabled in both nodes unless `telemetry_url` is set.
 
 ## Launch
 
