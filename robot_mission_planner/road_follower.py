@@ -260,6 +260,8 @@ class RoadFollower(Node):
         self._gps_start_index = 0
         self._sequence_configured = False
         self._requested_mode = None  # last mode asked of the commander (state topic lags)
+        self._requested_mode_time = 0.0
+        self._mode_settle_time = 2.0  # s after a switch before the state topic is trusted
         self._waypoints_synced = False  # first sync searches the whole list
         self._gps_reason = None  # why GPS mode was entered
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
@@ -554,6 +556,23 @@ class RoadFollower(Node):
         if msg.data != self.commander_mode:
             self.get_logger().info(f"Commander state: {msg.data}")
         self.commander_mode = msg.data
+        # The commander leaves our mode on its own (sequence finished -> STOP, operator
+        # intervention, STUCK). Forget the request so the next switch is actually sent.
+        if (
+            self._requested_mode is not None
+            and msg.data.lower() != self._requested_mode
+            and (self._now() - self._requested_mode_time) > self._mode_settle_time
+        ):
+            self._requested_mode = None
+
+    def _commander_left_us(self) -> bool:
+        """True once the commander sits in STOP although we asked for goto/sequence."""
+        return (
+            self.commander_mode is not None
+            and self.commander_mode.upper() == "STOP"
+            and self._requested_mode is None
+            and self._goal_active
+        )
 
     def _commander_stuck(self) -> bool:
         return self.commander_mode is not None and "STUCK" in self.commander_mode.upper()
@@ -605,6 +624,15 @@ class RoadFollower(Node):
             self._sync_waypoint_index_to_closest(rob_xy)
         if self.nav_backend == "commander" and self.state == self.STATE_ROAD:
             self._check_road_goal_reached(rob_xy)
+        if self.nav_backend == "commander" and self._commander_left_us():
+            if self.state == self.STATE_GPS:
+                # The sequence window (gps_sequence_window) was consumed: send the next one.
+                self.get_logger().info("Commander finished the sequence window; sending the next one.")
+                self._send_gps_goal()
+            else:
+                self.get_logger().info("Commander stopped during ROAD; re-sending the road goal.")
+                self._goal_active = False
+                self._send_road_goal()
         self._check_state_transitions(rob_xy)
 
     def _sync_waypoint_index_to_closest(self, rob_xy):
@@ -828,7 +856,8 @@ class RoadFollower(Node):
         end = start + self.gps_sequence_window if self.gps_sequence_window > 0 else len(self.waypoints)
         remaining = self.waypoints[start:end]
         if not remaining:
-            self.get_logger().warn("No remaining GPS waypoints to send.")
+            self.get_logger().warn("No remaining GPS waypoints to send (end of mission).")
+            self._goal_active = False
             return
         self._gps_start_index = start
         self.get_logger().info(f"GPS goal: sending {len(remaining)} waypoints from index {start}.")
@@ -917,12 +946,14 @@ class RoadFollower(Node):
             return
         if self.commander_mode is not None and self.commander_mode.lower() == mode:
             self._requested_mode = mode
+            self._requested_mode_time = self._now()
             return
         cli = self._cli_switch_mode
         if not cli.service_is_ready():
             self.get_logger().warn(f"{cli.srv_name} not ready; cannot switch to '{mode}'.")
             return
         self._requested_mode = mode
+        self._requested_mode_time = self._now()
         req = self._srv_types["switch"].Request()
         req.mode = mode
 
