@@ -32,8 +32,10 @@ GPX mission (map_data viewer "Paths only") ──────┘
   watched with `service_timeout`.
 
 The node publishes its own state as a latched `std_msgs/String` on `state_topic`
-(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck>`) — the `map_data` viewer
-tracker shows it.
+(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck>`) and the intersection that
+triggered GPS mode as a latched `PoseStamped` on `active_intersection_topic`
+(`/road_follower/active_intersection`, empty `frame_id` when none) — the `map_data` viewer
+tracker shows both.
 
 Backends (`nav_backend`):
 

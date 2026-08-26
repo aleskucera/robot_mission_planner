@@ -121,6 +121,9 @@ class RoadFollower(Node):
         self.declare_parameter("goal_sequence_topic", "/goal_sequence")  # commander: latched PoseArray
         self.declare_parameter("commander_state_topic", "/commander/state")
         self.declare_parameter("state_topic", "~/state")  # latched String: ROAD | GPS:<reason>
+        # latched PoseStamped in map_frame of the intersection that triggered GPS mode
+        # (empty frame_id = none); the map_data viewer draws the enter/exit circles around it
+        self.declare_parameter("active_intersection_topic", "~/active_intersection")
         self.declare_parameter("switch_mode_service", "/crl_commander/switch_mode")
         self.declare_parameter(
             "configure_sequence_service", "/crl_commander/configure_sequence_mode"
@@ -230,6 +233,10 @@ class RoadFollower(Node):
 
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
         self._state_pub = self.create_publisher(String, gp("state_topic"), latched)
+        self._active_int_pub = self.create_publisher(
+            PoseStamped, gp("active_intersection_topic"), latched
+        )
+        self._published_active = object()  # sentinel so the first state is always published
         self.create_timer(5.0, self._publish_waypoints_markers)
 
         # --- Waypoints ---
@@ -619,6 +626,16 @@ class RoadFollower(Node):
     def _publish_state(self):
         text = "ROAD" if self.state == self.STATE_ROAD else f"GPS:{self._gps_reason}"
         self._state_pub.publish(String(data=text))
+        active = self._active_intersection if self.state == self.STATE_GPS else None
+        if active != self._published_active:
+            msg = PoseStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            if active is not None:
+                msg.header.frame_id = self.map_frame
+                msg.pose.position.x, msg.pose.position.y = float(active[0]), float(active[1])
+            msg.pose.orientation.w = 1.0
+            self._active_int_pub.publish(msg)
+            self._published_active = active
 
     def _main_logic_step(self):
         self._publish_state()
