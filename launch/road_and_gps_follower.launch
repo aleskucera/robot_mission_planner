@@ -24,6 +24,7 @@
   <arg name="goal_waypoint_topic" default="/goal_waypoint" />
   <arg name="goal_sequence_topic" default="/goal_sequence" />
   <arg name="commander_state_topic" default="/commander/state" />
+  <arg name="state_topic" default="~/state" />
   <arg name="switch_mode_service" default="/crl_commander/switch_mode" />
   <arg name="configure_sequence_service" default="/crl_commander/configure_sequence_mode" />
 
@@ -59,6 +60,7 @@
       <param name="goal_waypoint_topic" value="$(var goal_waypoint_topic)" />
       <param name="goal_sequence_topic" value="$(var goal_sequence_topic)" />
       <param name="commander_state_topic" value="$(var commander_state_topic)" />
+      <param name="state_topic" value="$(var state_topic)" />
       <param name="switch_mode_service" value="$(var switch_mode_service)" />
       <param name="configure_sequence_service" value="$(var configure_sequence_service)" />
 

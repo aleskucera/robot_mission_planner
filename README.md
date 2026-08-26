@@ -31,6 +31,10 @@ GPX mission (map_data viewer "Paths only") ──────┘
   segmentation cannot pull the robot off the mission. Commander service calls are
   watched with `service_timeout`.
 
+The node publishes its own state as a latched `std_msgs/String` on `state_topic`
+(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck>`) — the `map_data` viewer
+tracker shows it.
+
 Backends (`nav_backend`):
 
 | backend | ROAD goal | GPS waypoints |

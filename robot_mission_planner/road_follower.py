@@ -120,6 +120,7 @@ class RoadFollower(Node):
         self.declare_parameter("goal_waypoint_topic", "/goal_waypoint")  # commander: operator goal
         self.declare_parameter("goal_sequence_topic", "/goal_sequence")  # commander: latched PoseArray
         self.declare_parameter("commander_state_topic", "/commander/state")
+        self.declare_parameter("state_topic", "~/state")  # latched String: ROAD | GPS:<reason>
         self.declare_parameter("switch_mode_service", "/crl_commander/switch_mode")
         self.declare_parameter(
             "configure_sequence_service", "/crl_commander/configure_sequence_mode"
@@ -228,6 +229,7 @@ class RoadFollower(Node):
                 self._gps_action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
 
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
+        self._state_pub = self.create_publisher(String, gp("state_topic"), latched)
         self.create_timer(5.0, self._publish_waypoints_markers)
 
         # --- Waypoints ---
@@ -614,7 +616,12 @@ class RoadFollower(Node):
             pass
 
     # ------------------------------------------------------------------ state machine
+    def _publish_state(self):
+        text = "ROAD" if self.state == self.STATE_ROAD else f"GPS:{self._gps_reason}"
+        self._state_pub.publish(String(data=text))
+
     def _main_logic_step(self):
+        self._publish_state()
         pose = self._robot_pose()
         if pose is None:
             return
