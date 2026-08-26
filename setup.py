@@ -22,7 +22,6 @@ setup(
  maintainer_email=['kuceral4@fel.cvut.cz','vlkjan6@fel.cvut.cz'],
  description='Robot Mission Planner',
  license='BSD-3-Clause',
- tests_require=['pytest'],
  entry_points={
      'console_scripts': [
              'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main',
