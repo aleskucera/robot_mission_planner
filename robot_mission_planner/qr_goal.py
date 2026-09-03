@@ -177,7 +177,7 @@ def main(args=None):
         def __init__(self):
             super().__init__("qr_goal")
             p = self.declare_parameter
-            self.image_topic = p("image_topic", "/camera/image_color/compressed").value
+            self.image_topic = p("image_topic", "/odin1/image/compressed").value
             self.transport = p("image_transport", "compressed").value  # compressed | raw
             self.process_rate = float(p("process_rate", 4.0).value)  # Hz, frames above are dropped
             confirm_frames = int(p("confirm_frames", 2).value)

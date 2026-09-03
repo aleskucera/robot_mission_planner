@@ -106,7 +106,7 @@ plan from the robot's fix to it. A payload must be decoded in `confirm_frames` c
 processed frames and is published once (again only after `republish_after_s`).
 
 ```bash
-ros2 launch robot_mission_planner qr_goal.launch image_topic:=/camera/image_color/compressed
+ros2 launch robot_mission_planner qr_goal.launch    # reads /odin1/image/compressed
 ros2 topic echo /qr_goal/detections          # every decoded payload (debug)
 ros2 service call /qr_goal/enable std_srvs/srv/SetBool "{data: false}"   # pause detection
 
@@ -118,8 +118,9 @@ ros2 run robot_mission_planner qr_goal_send 50.1103476,14.4159857 --direct   # n
 Parameters: `image_topic`, `image_transport` (`compressed` | `raw`), `process_rate` (Hz),
 `confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`, `detections_topic`,
 `publish_annotated` (`~/image_annotated` with the code outlined, for rqt), `enabled`. The
-camera topic default comes from the 2026-09-02 record list; verify it on the robot. Parser and
-decoder are pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
+default camera is the Odin (`/odin1/image/compressed`); the Basler
+(`/camera/image_color/compressed`) is a backup that is not mounted. Parser and decoder are
+pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
 
 ## Tests
 

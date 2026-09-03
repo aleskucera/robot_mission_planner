@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- Robotour goal QR reader: camera -> geo:lat,lon -> /route_planner/goal (GeoPointStamped).
-       The 2026-09-02 record list names /camera/image_color/compressed; check the real camera
-       topic on the robot (pylon camera on the jetson) before relying on the default. -->
-  <arg name="image_topic" default="/camera/image_color/compressed" />
+       The Odin's camera (/odin1/image/compressed, jpeg, ~27 Hz) is the QR camera; the Basler
+       (/camera/image_color/compressed) is a backup that is not mounted at the moment. -->
+  <arg name="image_topic" default="/odin1/image/compressed" />
   <arg name="image_transport" default="compressed" />       <!-- compressed | raw -->
   <arg name="process_rate" default="4.0" />                 <!-- Hz: decode at most this often -->
   <arg name="confirm_frames" default="2" />                 <!-- consecutive frames before a goal -->
