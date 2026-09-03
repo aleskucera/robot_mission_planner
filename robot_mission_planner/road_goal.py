@@ -114,3 +114,24 @@ def smooth(previous: Point | None, current: Point, alpha: float) -> Point:
         return current
     a = min(alpha, 0.99)
     return a * previous[0] + (1.0 - a) * current[0], a * previous[1] + (1.0 - a) * current[1]
+
+
+def is_arrived(
+    robot_xy: Point,
+    waypoints_xy: list[Point | None],
+    current_index: int,
+    radius: float,
+    index_window: int = 3,
+) -> bool:
+    """
+    True when the robot is within ``radius`` of the last waypoint and the follower's
+    index is within ``index_window`` waypoints of the end. The index guard stops a
+    route that starts next to its own goal (or loops back past it) from finishing
+    before it started.
+    """
+    pts = [p for p in waypoints_xy if p is not None]
+    if not pts:
+        return False
+    if current_index < len(waypoints_xy) - 1 - max(0, index_window):
+        return False
+    return _dist(robot_xy, pts[-1]) <= radius

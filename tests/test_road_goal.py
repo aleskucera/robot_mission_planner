@@ -76,3 +76,15 @@ def test_smooth():
     assert smooth(None, (1.0, 1.0), 0.5) == (1.0, 1.0)
     assert smooth((0.0, 0.0), (1.0, 1.0), 0.0) == (1.0, 1.0)
     assert smooth((0.0, 0.0), (1.0, 1.0), 0.5) == pytest.approx((0.5, 0.5))
+
+
+def test_is_arrived_radius_and_index_guard():
+    from robot_mission_planner.road_goal import is_arrived
+
+    wps = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0), (40.0, 0.0)]
+    assert is_arrived((38.0, 1.0), wps, 4, radius=5.0)
+    assert is_arrived((36.0, 0.0), wps, 2, radius=5.0, index_window=3)
+    assert not is_arrived((36.0, 0.0), wps, 0, radius=5.0, index_window=3)  # index too early
+    assert not is_arrived((30.0, 0.0), wps, 4, radius=5.0)  # 10 m away
+    assert not is_arrived((40.0, 0.0), [], 0, radius=5.0)
+    assert is_arrived((41.0, 0.0), [None, (40.0, 0.0)], 1, radius=5.0)
