@@ -2,7 +2,7 @@
 <launch>
   <!-- Path to the GPX or YAML file with the pre-planned waypoints (absolute, or relative to
        robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only"). -->
-  <arg name="gps_file" default="stromovka_planned.gpx" />
+  <arg name="gps_file" default="" />    <!-- empty = mission mode: wait for QR goals -->
   <arg name="robot_id" default="helhest-robot" />
   <arg name="loop" default="false" />
 
@@ -52,6 +52,18 @@
   <arg name="road_goal_smoothing" default="0.0" />           <!-- carrot: 0 = raw, 0.8 = damped -->
   <arg name="road_goal_reached_distance" default="2.5" />    <!-- m: forget the active road goal -->
 
+  <!-- Mission (Robotour): QR goal -> route_planner -> 5 s pause -> follow -> arrive -> idle -->
+  <arg name="qr_goal_topic" default="/qr_goal/goal" />     <!-- GeoPointStamped from qr_goal -->
+  <arg name="plan_route_action" default="/route_planner/plan_route" />
+  <arg name="plan_spacing" default="3.0" />                <!-- m between route waypoints -->
+  <arg name="plan_retries" default="3" />
+  <arg name="plan_retry_delay" default="5.0" />            <!-- s -->
+  <arg name="plan_timeout" default="60.0" />               <!-- s per attempt -->
+  <arg name="start_delay" default="5.0" />                 <!-- s: route received -> first command -->
+  <arg name="goal_reached_radius" default="5.0" />         <!-- m to the last waypoint = arrived -->
+  <arg name="arrival_index_window" default="3" />          <!-- waypoints from the end that count -->
+  <arg name="arrived_hold" default="0.0" />                <!-- s in ARRIVED before IDLE -->
+
   <!-- Road-goal sanity and failure handling -->
   <arg name="road_goal_max_route_offset" default="5.0" />     <!-- m: reject road goals farther from the planned route (0 = off) -->
   <arg name="road_goal_reject_behind" default="true" />
@@ -80,6 +92,16 @@
       <param name="configure_sequence_service" value="$(var configure_sequence_service)" />
 
       <param name="file" value="$(var gps_file)" />
+      <param name="qr_goal_topic" value="$(var qr_goal_topic)" />
+      <param name="plan_route_action" value="$(var plan_route_action)" />
+      <param name="plan_spacing" value="$(var plan_spacing)" />
+      <param name="plan_retries" value="$(var plan_retries)" />
+      <param name="plan_retry_delay" value="$(var plan_retry_delay)" />
+      <param name="plan_timeout" value="$(var plan_timeout)" />
+      <param name="start_delay" value="$(var start_delay)" />
+      <param name="goal_reached_radius" value="$(var goal_reached_radius)" />
+      <param name="arrival_index_window" value="$(var arrival_index_window)" />
+      <param name="arrived_hold" value="$(var arrived_hold)" />
       <param name="robot_id" value="$(var robot_id)" />
       <param name="start" value="0" />
       <param name="reverse" value="false" />

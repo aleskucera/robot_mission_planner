@@ -26,6 +26,8 @@
   <!-- crl_commander provides the SwitchMode / ConfigureSequenceMode services (nav_backend=commander).
        On the robot it is the real package in adam_ws; in a dev workspace use the interface stub. -->
   <exec_depend>crl_commander</exec_depend>
+  <!-- map_data_interfaces provides the PlanRoute action road_follower uses for QR goals. -->
+  <exec_depend>map_data_interfaces</exec_depend>
   <exec_depend>python3-gpxpy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>  <!-- qr_goal -->

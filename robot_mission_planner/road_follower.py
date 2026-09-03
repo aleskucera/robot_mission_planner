@@ -48,7 +48,7 @@ import utm
 import yaml
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
-from geographic_msgs.msg import GeoPose
+from geographic_msgs.msg import GeoPointStamped, GeoPose
 from geometry_msgs.msg import Point, PoseArray, PoseStamped
 from nav2_msgs.action import FollowGPSWaypoints, FollowWaypoints, NavigateToPose
 from nav_msgs.msg import Path
@@ -62,6 +62,7 @@ from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_mission_planner.road_goal import (
+    is_arrived,
     is_behind,
     select_carrot_goal,
     select_path_goal,
@@ -116,6 +117,9 @@ def distance_to_polyline(point, segments_a: np.ndarray, segments_b: np.ndarray) 
 class RoadFollower(Node):
     STATE_ROAD = 0
     STATE_GPS = 1
+    STATE_IDLE = 2  # mission: waiting for a QR goal
+    STATE_PLANNING = 3  # mission: route requested from route_planner / start pause
+    STATE_ARRIVED = 4  # mission: at the goal, commander stopped
 
     def __init__(self):
         super().__init__("road_follower")
@@ -195,6 +199,23 @@ class RoadFollower(Node):
         self.declare_parameter("service_timeout", 3.0)  # s: commander service call watchdog
         self.declare_parameter("gps_sequence_window", 10)  # waypoints per sequence (0 = all)
 
+        # --- Mission (Robotour): QR goal -> route_planner -> follow -> arrive -> idle ---
+        # With no `file`, the follower idles until a goal arrives on qr_goal_topic, asks
+        # plan_route_action for a route from its own GNSS fix to it, pauses start_delay,
+        # follows, and once within goal_reached_radius of the last waypoint stops and idles
+        # again. QR goals received while not IDLE are ignored.
+        self.declare_parameter("qr_goal_topic", "/qr_goal/goal")  # GeoPointStamped, latched
+        self.declare_parameter("plan_route_action", "/route_planner/plan_route")
+        self.declare_parameter("plan_spacing", 3.0)  # m between route waypoints (0 = planner default)
+        self.declare_parameter("plan_retries", 3)  # attempts before giving up on a goal
+        self.declare_parameter("plan_retry_delay", 5.0)  # s between attempts
+        self.declare_parameter("plan_timeout", 60.0)  # s for one attempt (server + planning)
+        self.declare_parameter("start_delay", 5.0)  # s between route received and first command
+        self.declare_parameter("goal_reached_radius", 5.0)  # m to the last waypoint = arrived
+        self.declare_parameter("arrival_index_window", 3)  # waypoints from the end that count
+        self.declare_parameter("arrived_hold", 0.0)  # s to stay ARRIVED before IDLE (signal later)
+        self.declare_parameter("event_topic", "~/event")  # latched String mission events
+
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
         self.nav_backend = gp("nav_backend")
         if self.nav_backend not in ("commander", "nav2"):
@@ -236,6 +257,14 @@ class RoadFollower(Node):
         self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
         self.service_timeout = gp("service_timeout")
         self.gps_sequence_window = gp("gps_sequence_window")
+        self.plan_spacing = float(gp("plan_spacing"))
+        self.plan_retries = int(gp("plan_retries"))
+        self.plan_retry_delay = float(gp("plan_retry_delay"))
+        self.plan_timeout = float(gp("plan_timeout"))
+        self.start_delay = float(gp("start_delay"))
+        self.goal_reached_radius = float(gp("goal_reached_radius"))
+        self.arrival_index_window = int(gp("arrival_index_window"))
+        self.arrived_hold = float(gp("arrived_hold"))
 
         # --- TF ---
         self.tf_buffer = Buffer()
@@ -278,6 +307,7 @@ class RoadFollower(Node):
 
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
         self._state_pub = self.create_publisher(String, gp("state_topic"), latched)
+        self._event_pub = self.create_publisher(String, gp("event_topic"), latched)
         self._active_int_pub = self.create_publisher(
             PoseStamped, gp("active_intersection_topic"), latched
         )
@@ -293,7 +323,12 @@ class RoadFollower(Node):
         self._route_a = np.empty((0, 2))  # route polyline segments in map_frame
         self._route_b = np.empty((0, 2))
         self.gps_path = ""
-        self._load_gps_data()
+        self._route_source = ""
+        file_points = self._load_gps_data()
+        if file_points:
+            self._set_route(file_points, f"file {self.gps_path}")
+        else:
+            self.state = self.STATE_IDLE
 
         if self.nav_backend == "nav2" and not self.use_utm:
             self._tf_ready = True  # lat/lon goals, no transform needed
@@ -322,6 +357,13 @@ class RoadFollower(Node):
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
         self._gps_route_dir = None  # unit route direction at the active intersection
         self._service_watchdogs = []
+        self._mission_goal = None  # (lat, lon) of the QR goal being planned / followed
+        self._plan_attempt = 0
+        self._plan_goal_handle = None
+        self._plan_timer = None  # retry / start-delay / timeout timer
+        self._plan_started = 0.0
+        self._arrived_time = 0.0
+        self._plan_client = None
 
         self.pose_gps = None
         self.pose_ekf = None
@@ -345,6 +387,20 @@ class RoadFollower(Node):
             self.create_subscription(
                 NavSatFix, gp("gps_filtered_topic"), self._ekf_callback, qos_profile_sensor_data
             )
+        if gp("qr_goal_topic"):
+            self.create_subscription(
+                GeoPointStamped, gp("qr_goal_topic"), self._qr_goal_callback, latched
+            )
+            try:
+                from map_data_interfaces.action import PlanRoute
+
+                self._plan_action_type = PlanRoute
+                self._plan_client = ActionClient(self, PlanRoute, gp("plan_route_action"))
+            except ImportError:
+                self.get_logger().error(
+                    "map_data_interfaces not found: QR goals cannot be planned (build it, "
+                    "see map_data/map_data_interfaces)"
+                )
 
         if self.nav_backend == "nav2":
             self.get_logger().info("Waiting for Nav2 action servers...")
@@ -364,7 +420,9 @@ class RoadFollower(Node):
             f"({gp('carrot_topic') if self.road_goal_source == 'carrot' else gp('road_points_topic')}), "
             f"ahead {self.road_goal_min_ahead}-{self.road_goal_max_ahead} m; "
             f"intersections: {gp('intersections_topic')}, "
-            f"GPS file: {self.gps_file_name}\n"
+            f"GPS file: {self.gps_file_name or '-'}, QR goals: {gp('qr_goal_topic')} -> "
+            f"{gp('plan_route_action')}, start delay {self.start_delay} s, "
+            f"arrival radius {self.goal_reached_radius} m\n"
             f"Thresholds: enter={self.enter_threshold} m, exit={self.exit_threshold} m, "
             f"waypoint={self.gps_threshold} m, route offset={self.road_goal_max_route_offset} m, "
             f"road path timeout={self.road_path_timeout} s"
@@ -420,10 +478,10 @@ class RoadFollower(Node):
 
     # ------------------------------------------------------------------ waypoints
     def _load_gps_data(self):
-        """Loads and parses the GPS file (GPX or YAML)."""
+        """Parse the GPS file (GPX or YAML) into ``[{lat, lon, ele}, ...]`` (empty = none)."""
         if self.gps_file_name == "":
-            self.get_logger().warn("No GPS file specified. GPS following will not be available.")
-            return
+            self.get_logger().info("No GPS file: waiting for QR goals (mission mode).")
+            return []
 
         if os.path.isabs(self.gps_file_name):
             self.gps_path = self.gps_file_name
@@ -441,8 +499,9 @@ class RoadFollower(Node):
 
         if not os.path.exists(self.gps_path):
             self.get_logger().error(f"GPS file {self.gps_path} does not exist!")
-            return
+            return []
 
+        points_raw = []
         try:
             if self.gps_path.endswith(".gpx"):
                 with open(self.gps_path, "r") as f:
@@ -453,23 +512,42 @@ class RoadFollower(Node):
                 if not points:
                     points = [p for r in gpx.routes for p in r.points]
                 for wp in points:
-                    self.waypoints_raw.append(
+                    points_raw.append(
                         {"lat": wp.latitude, "lon": wp.longitude, "ele": wp.elevation or 0.0}
                     )
             elif self.gps_path.endswith((".yaml", ".yml")):
                 with open(self.gps_path, "r") as f:
                     data = yaml.safe_load(f)
                 for wp in data.get("waypoints", []):
-                    self.waypoints_raw.append(
+                    points_raw.append(
                         {"lat": wp["latitude"], "lon": wp["longitude"], "ele": wp.get("elevation", 0.0)}
                     )
             if self.reverse:
-                self.waypoints_raw.reverse()
-            self.get_logger().info(
-                f"Loaded {len(self.waypoints_raw)} waypoints from {self.gps_path}"
-            )
+                points_raw.reverse()
+            self.get_logger().info(f"Loaded {len(points_raw)} waypoints from {self.gps_path}")
         except Exception as e:
             self.get_logger().error(f"Failed to parse GPS file: {e}")
+            return []
+        return points_raw
+
+    def _set_route(self, points_raw, source: str):
+        """
+        Replace the mission route (``[{lat, lon, ele}, ...]``): resets the waypoint index and
+        everything derived from the list (map coordinates, route polyline, GPS bookkeeping).
+        """
+        self.waypoints_raw = list(points_raw)
+        self._route_source = source
+        self.current_waypoint_index = self.start_index if source.startswith("file") else 0
+        self._waypoints_synced = False
+        self._gps_entry_index = 0
+        self._gps_route_dir = None
+        self._last_road_goal = None
+        if self.src_to_map is not None:
+            self._process_waypoints()
+        else:
+            self.number_waypoints = len(self.waypoints_raw)
+        self.get_logger().info(f"Route set: {len(self.waypoints_raw)} waypoints from {source}")
+        self._publish_waypoints_markers()
 
     def _process_waypoints(self):
         """Convert raw lat/lon waypoints into backend goals and map_frame coordinates."""
@@ -724,9 +802,21 @@ class RoadFollower(Node):
             pass
 
     # ------------------------------------------------------------------ state machine
+    def _state_text(self) -> str:
+        if self.state == self.STATE_ROAD:
+            return "ROAD"
+        if self.state == self.STATE_GPS:
+            return f"GPS:{self._gps_reason}"
+        return {self.STATE_IDLE: "IDLE", self.STATE_PLANNING: "PLANNING", self.STATE_ARRIVED: "ARRIVED"}[
+            self.state
+        ]
+
+    def _event(self, text: str):
+        self.get_logger().info(f"EVENT {text}")
+        self._event_pub.publish(String(data=text))
+
     def _publish_state(self):
-        text = "ROAD" if self.state == self.STATE_ROAD else f"GPS:{self._gps_reason}"
-        self._state_pub.publish(String(data=text))
+        self._state_pub.publish(String(data=self._state_text()))
         active = self._active_intersection if self.state == self.STATE_GPS else None
         if active != self._published_active:
             msg = PoseStamped()
@@ -740,10 +830,22 @@ class RoadFollower(Node):
 
     def _main_logic_step(self):
         self._publish_state()
+        if self.state == self.STATE_ARRIVED:
+            if (self._now() - self._arrived_time) >= self.arrived_hold:
+                self._enter_idle("arrived, ready for the next goal")
+            return
+        if self.state in (self.STATE_IDLE, self.STATE_PLANNING):
+            return
         pose = self._robot_pose()
         if pose is None:
             return
         rob_xy = pose[:2]
+        if self._mission_goal is not None and is_arrived(
+            rob_xy, self.waypoints_map, self.current_waypoint_index,
+            self.goal_reached_radius, self.arrival_index_window,
+        ):
+            self._enter_arrived(rob_xy)
+            return
         # Nav2 reports the waypoint index through action feedback; the commander does not.
         if self.state == self.STATE_ROAD or self.nav_backend == "commander":
             self._sync_waypoint_index_to_closest(rob_xy)
@@ -828,6 +930,8 @@ class RoadFollower(Node):
         return float("inf"), None
 
     def _check_state_transitions(self, rob_xy):
+        if self.state not in (self.STATE_ROAD, self.STATE_GPS):
+            return
         closest, closest_xy = self._closest_intersection(rob_xy)
 
         if self.state == self.STATE_ROAD:
@@ -893,6 +997,156 @@ class RoadFollower(Node):
         self._last_road_goal = None
         self._cancel_current_goal()
         self._schedule_goal(delay_sec=1.0, mode="ROAD")
+
+    # ------------------------------------------------------------------ mission
+    def _cancel_plan_timer(self):
+        if self._plan_timer is not None:
+            self._plan_timer.cancel()
+            self._plan_timer = None
+
+    def _one_shot(self, delay_sec, cb):
+        """Replace the pending mission timer with a one-shot ``cb`` after ``delay_sec``."""
+        self._cancel_plan_timer()
+
+        def fire():
+            self._cancel_plan_timer()
+            cb()
+
+        self._plan_timer = self.create_timer(max(0.01, delay_sec), fire)
+
+    def _qr_goal_callback(self, msg):
+        lat, lon = msg.position.latitude, msg.position.longitude
+        if self.state != self.STATE_IDLE:
+            self.get_logger().warn(
+                f"QR goal {lat:.7f}, {lon:.7f} ignored: follower is {self._state_text()}",
+                throttle_duration_sec=5.0,
+            )
+            return
+        if self._plan_client is None:
+            self.get_logger().error("QR goal received but the PlanRoute action client is unavailable")
+            return
+        # TODO(signal): acknowledge the QR goal audibly here as well.
+        self._event(f"GOAL:{lat:.7f},{lon:.7f}")
+        self.get_logger().info(f"QR goal accepted: {lat:.7f}, {lon:.7f}; requesting a route")
+        self._mission_goal = (lat, lon)
+        self._plan_attempt = 0
+        self.state = self.STATE_PLANNING
+        self._publish_state()
+        self._request_route()
+
+    def _request_route(self):
+        self._plan_attempt += 1
+        if not self._plan_client.server_is_ready():
+            self._plan_failed("route_planner action server not available")
+            return
+        from geographic_msgs.msg import GeoPoint
+
+        goal = self._plan_action_type.Goal()
+        if self.pose_gps is not None:
+            start = GeoPoint()
+            start.latitude, start.longitude = self.pose_gps["lat"], self.pose_gps["lon"]
+            goal.waypoints.append(start)
+            goal.start_from_robot = False
+        else:
+            goal.start_from_robot = True  # let route_planner take its own fix
+        end = GeoPoint()
+        end.latitude, end.longitude = self._mission_goal
+        goal.waypoints.append(end)
+        goal.spacing = self.plan_spacing
+        self._plan_started = self._now()
+        self.get_logger().info(
+            f"PlanRoute attempt {self._plan_attempt}/{self.plan_retries}: "
+            f"{'from own fix' if not goal.start_from_robot else 'from route_planner fix'} to "
+            f"{end.latitude:.7f}, {end.longitude:.7f}"
+        )
+        self._event("PLANNING")
+        future = self._plan_client.send_goal_async(goal)
+        future.add_done_callback(self._plan_response_cb)
+        self._one_shot(self.plan_timeout, lambda: self._plan_failed("timeout"))
+
+    def _plan_response_cb(self, future):
+        try:
+            handle = future.result()
+        except Exception as e:  # noqa: BLE001
+            self._plan_failed(f"send failed: {e}")
+            return
+        if not handle.accepted:
+            self._plan_failed("rejected")
+            return
+        self._plan_goal_handle = handle
+        handle.get_result_async().add_done_callback(self._plan_result_cb)
+
+    def _plan_result_cb(self, future):
+        if self.state != self.STATE_PLANNING:
+            return
+        try:
+            result = future.result().result
+        except Exception as e:  # noqa: BLE001
+            self._plan_failed(f"result failed: {e}")
+            return
+        if not result.success:
+            self._plan_failed(f"{result.reason or 'failed'}: {result.message}")
+            return
+        points = [
+            {"lat": gp.pose.position.latitude, "lon": gp.pose.position.longitude, "ele": 0.0}
+            for gp in result.route.poses
+        ]
+        if len(points) < 2:
+            self._plan_failed("empty route")
+            return
+        self._cancel_plan_timer()
+        self._set_route(points, "route_planner")
+        self._event(f"ROUTE:{len(points)} waypoints, {result.length_m:.0f} m")
+        self.get_logger().info(
+            f"Route received ({len(points)} waypoints, {result.length_m:.0f} m); "
+            f"starting in {self.start_delay:.0f} s"
+        )
+        self._one_shot(self.start_delay, self._start_following)
+
+    def _plan_failed(self, why: str):
+        if self.state != self.STATE_PLANNING:
+            return
+        self._cancel_plan_timer()
+        self._plan_goal_handle = None
+        if self._plan_attempt < self.plan_retries:
+            self.get_logger().warn(
+                f"Route planning failed ({why}); retrying in {self.plan_retry_delay:.0f} s"
+            )
+            self._one_shot(self.plan_retry_delay, self._request_route)
+            return
+        self._event(f"PLAN_FAILED:{why}")
+        self.get_logger().error(f"Route planning failed ({why}) after {self._plan_attempt} attempts")
+        self._enter_idle("planning failed, waiting for a new goal")
+
+    def _start_following(self):
+        if self.state != self.STATE_PLANNING:
+            return
+        self._event("START")
+        self._enter_road("Mission start")
+
+    def _enter_arrived(self, rob_xy):
+        d = math.hypot(rob_xy[0] - self.waypoints_map[-1][0], rob_xy[1] - self.waypoints_map[-1][1])
+        self.get_logger().info(f"Goal reached ({d:.1f} m from the last waypoint): stopping.")
+        self.state = self.STATE_ARRIVED
+        self._arrived_time = self._now()
+        self._cancel_plan_timer()
+        if self._pending_goal_timer:
+            self._pending_goal_timer.cancel()
+            self._pending_goal_timer = None
+        self._cancel_current_goal()
+        self._gps_reason = None
+        self._active_intersection = None
+        self._event("ARRIVED")
+        self._publish_state()
+
+    def _enter_idle(self, why: str):
+        self.get_logger().info(f"{why}. Waiting for a QR goal (IDLE).")
+        self.state = self.STATE_IDLE
+        self._mission_goal = None
+        self._plan_goal_handle = None
+        self._cancel_plan_timer()
+        self._event("IDLE")
+        self._publish_state()
 
     # ------------------------------------------------------------------ goal dispatch
     def _schedule_goal(self, delay_sec, mode):
