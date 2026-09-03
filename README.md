@@ -97,6 +97,30 @@ serves the two services and republishes `/lookahead_pose` as `/predicted_path_ls
 rosbag2 does not reliably replay `/tf_static` to late subscribers — broadcast the bag's static
 transforms separately.
 
+## QR goal input
+
+Robotour hands the goal over as a QR code with a geo URI payload (`geo:lat,lon`, RFC 5870).
+`qr_goal` reads the robot camera, decodes QR codes with OpenCV, and publishes the position as a
+latched `geographic_msgs/GeoPointStamped` on `/route_planner/goal`, which makes `route_planner`
+plan from the robot's fix to it. A payload must be decoded in `confirm_frames` consecutive
+processed frames and is published once (again only after `republish_after_s`).
+
+```bash
+ros2 launch robot_mission_planner qr_goal.launch image_topic:=/camera/image_color/compressed
+ros2 topic echo /qr_goal/detections          # every decoded payload (debug)
+ros2 service call /qr_goal/enable std_srvs/srv/SetBool "{data: false}"   # pause detection
+
+# manual entry (the loading-zone QR is handed to the team in the service area):
+ros2 run robot_mission_planner qr_goal_send "geo:50.1103476,14.4159857"
+ros2 run robot_mission_planner qr_goal_send 50.1103476,14.4159857 --direct   # no qr_goal running
+```
+
+Parameters: `image_topic`, `image_transport` (`compressed` | `raw`), `process_rate` (Hz),
+`confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`, `detections_topic`,
+`publish_annotated` (`~/image_annotated` with the code outlined, for rqt), `enabled`. The
+camera topic default comes from the 2026-09-02 record list; verify it on the robot. Parser and
+decoder are pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
+
 ## Tests
 
 ```bash
