@@ -4,7 +4,7 @@
        robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only"). -->
   <arg name="gps_file" default="" />    <!-- empty = mission mode: wait for QR goals -->
   <arg name="robot_id" default="helhest-robot" />
-  <arg name="loop" default="false" />
+  <arg name="loop" default="false" />    <!-- file routes only; mission routes never loop -->
 
   <!-- Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2" -->
   <arg name="nav_backend" default="commander" />

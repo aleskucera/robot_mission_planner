@@ -159,7 +159,7 @@ class RoadFollower(Node):
         self.declare_parameter("robot_id", "helhest-robot")
         self.declare_parameter("start", 0)
         self.declare_parameter("reverse", False)
-        self.declare_parameter("loop", True)
+        self.declare_parameter("loop", False)  # file routes only; mission routes never loop
         self.declare_parameter("use_utm", True)  # nav2 backend only
         self.declare_parameter("telemetry_url", "")  # empty = no telemetry POSTs
 
@@ -537,6 +537,12 @@ class RoadFollower(Node):
         """
         self.waypoints_raw = list(points_raw)
         self._route_source = source
+        if not source.startswith("file") and self.loop:
+            # A planned leg ends at its goal: wrapping the index / looping the commander's
+            # sequence would send the robot back to the start after ARRIVED was missed.
+            self.get_logger().info("Mission route: loop disabled")
+            self.loop = False
+            self._sequence_configured = False  # re-send configure_sequence_mode with loop=false
         self.current_waypoint_index = self.start_index if source.startswith("file") else 0
         self._waypoints_synced = False
         self._gps_entry_index = 0
