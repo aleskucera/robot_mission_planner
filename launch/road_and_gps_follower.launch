@@ -39,6 +39,19 @@
   <arg name="gps_exit_min_waypoints" default="0" />           <!-- waypoints to advance before leaving GPS mode -->
   <arg name="gps_sequence_window" default="10" />             <!-- waypoints sent per sequence (0 = all remaining) -->
 
+  <!-- Road goal source. carrot: the convex-hull centre of the road points in the current
+       lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose
+       with carrot_type:=path). path: the fitted/extrapolated /predicted_path_ls from
+       path_predictor. The goal is always kept road_goal_min_ahead in front of the robot:
+       crl_commander treats a goal inside its 2.5 m arrival box as reached and stops. -->
+  <arg name="road_goal_source" default="carrot" />           <!-- carrot | path -->
+  <arg name="carrot_topic" default="/cloud_hull_center_marker" />
+  <arg name="carrot_type" default="marker" />                <!-- marker | path -->
+  <arg name="road_goal_min_ahead" default="4.0" />           <!-- m: never send a closer goal -->
+  <arg name="road_goal_max_ahead" default="12.0" />          <!-- m: farther = projection artefact -->
+  <arg name="road_goal_smoothing" default="0.0" />           <!-- carrot: 0 = raw, 0.8 = damped -->
+  <arg name="road_goal_reached_distance" default="2.5" />    <!-- m: forget the active road goal -->
+
   <!-- Road-goal sanity and failure handling -->
   <arg name="road_goal_max_route_offset" default="5.0" />     <!-- m: reject road goals farther from the planned route (0 = off) -->
   <arg name="road_goal_reject_behind" default="true" />
@@ -80,6 +93,13 @@
       <param name="gps_exit_require_passed" value="$(var gps_exit_require_passed)" />
       <param name="gps_exit_min_waypoints" value="$(var gps_exit_min_waypoints)" />
       <param name="gps_sequence_window" value="$(var gps_sequence_window)" />
+      <param name="road_goal_source" value="$(var road_goal_source)" />
+      <param name="carrot_topic" value="$(var carrot_topic)" />
+      <param name="carrot_type" value="$(var carrot_type)" />
+      <param name="road_goal_min_ahead" value="$(var road_goal_min_ahead)" />
+      <param name="road_goal_max_ahead" value="$(var road_goal_max_ahead)" />
+      <param name="road_goal_smoothing" value="$(var road_goal_smoothing)" />
+      <param name="road_goal_reached_distance" value="$(var road_goal_reached_distance)" />
       <param name="road_goal_max_route_offset" value="$(var road_goal_max_route_offset)" />
       <param name="road_goal_reject_behind" value="$(var road_goal_reject_behind)" />
       <param name="road_path_timeout" value="$(var road_path_timeout)" />

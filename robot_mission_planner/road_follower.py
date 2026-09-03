@@ -4,8 +4,14 @@ Road follower with GPS fallback at intersections.
 
 State machine
 -------------
-ROAD  : follow the visually detected road (``road_points_topic``, nav_msgs/Path from
-        path_centerline) by sending its last pose as the navigation goal.
+ROAD  : follow the visually detected road. The goal is taken from ``road_goal_source``:
+        ``carrot`` (default) drives at the convex-hull centre of the road points in the
+        current lidar frame (``carrot_topic``, a visualization_msgs/Marker from
+        build_point_cloud, or a nav_msgs/Path whose last pose is used); ``path`` takes
+        the predicted road path (``road_points_topic``, nav_msgs/Path from
+        path_centerline). Either way the goal is kept at least ``road_goal_min_ahead``
+        in front of the robot (see ``road_goal.py``), because the commander treats a
+        goal inside its 2.5 m arrival box as already reached and stops.
 GPS   : follow the pre-planned GPX waypoints instead. Entered near an OSM intersection
         (``intersections_topic``, geometry_msgs/PoseArray from map_data/osm_cloud), when
         the road path stops arriving (``road_path_timeout``) or when the commander reports
@@ -54,6 +60,13 @@ from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
+
+from robot_mission_planner.road_goal import (
+    is_behind,
+    select_carrot_goal,
+    select_path_goal,
+    smooth,
+)
 
 # WGS84 (lat/lon -> ECEF for the commander backend; kept local to avoid a map_data dependency)
 _WGS84_A = 6378137.0
@@ -155,6 +168,20 @@ class RoadFollower(Node):
         # or behind the robot, so a bad segmentation cannot pull us off the mission.
         self.declare_parameter("road_goal_max_route_offset", 5.0)
         self.declare_parameter("road_goal_reject_behind", True)
+        # Where the ROAD goal comes from: "carrot" = one road-centre point per lidar frame
+        # (convex-hull centre from build_point_cloud), "path" = the fitted/extrapolated
+        # /predicted_path_ls from path_predictor.
+        self.declare_parameter("road_goal_source", "carrot")
+        self.declare_parameter("carrot_topic", "/cloud_hull_center_marker")
+        self.declare_parameter("carrot_type", "marker")  # marker | path (last pose)
+        # The goal is never closer than min_ahead (commander arrival box is 2.5 m) and a
+        # candidate farther than max_ahead is discarded as a projection artefact.
+        self.declare_parameter("road_goal_min_ahead", 4.0)
+        self.declare_parameter("road_goal_max_ahead", 12.0)
+        self.declare_parameter("road_goal_smoothing", 0.0)  # carrot: 0 = raw, 0.8 = damped
+        # Commander backend: forget the active road goal once this close to it, so the
+        # next observation re-sends one (the commander's own arrival box is 2.5 m).
+        self.declare_parameter("road_goal_reached_distance", 2.5)
         # Failure handling
         self.declare_parameter("road_path_timeout", 5.0)  # s without a road path -> GPS (0 = off)
         self.declare_parameter("stuck_fallback_to_gps", True)  # commander STUCK in ROAD -> GPS
@@ -187,6 +214,17 @@ class RoadFollower(Node):
         self.require_wp_to_exit = gp("require_waypoint_reached_to_exit_gps")
         self.road_goal_max_route_offset = gp("road_goal_max_route_offset")
         self.road_goal_reject_behind = gp("road_goal_reject_behind")
+        self.road_goal_source = gp("road_goal_source")
+        if self.road_goal_source not in ("carrot", "path"):
+            self.get_logger().error(
+                f"Unknown road_goal_source '{self.road_goal_source}', using 'carrot'"
+            )
+            self.road_goal_source = "carrot"
+        self.carrot_type = gp("carrot_type")
+        self.road_goal_min_ahead = gp("road_goal_min_ahead")
+        self.road_goal_max_ahead = gp("road_goal_max_ahead")
+        self.road_goal_smoothing = gp("road_goal_smoothing")
+        self.road_goal_reached_distance = gp("road_goal_reached_distance")
         self.road_path_timeout = gp("road_path_timeout")
         self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
         self.service_timeout = gp("service_timeout")
@@ -257,7 +295,8 @@ class RoadFollower(Node):
             self._utm_timer = self.create_timer(1.0, self._resolve_waypoint_transform)
 
         # --- Runtime state ---
-        self._latest_road_path = None
+        self._latest_road_path = None  # nav_msgs/Path (road_goal_source=path)
+        self._latest_carrot = None  # (x, y) in map_frame (road_goal_source=carrot)
         self._last_road_path_time = None  # node clock seconds of the last road path
         self._intersections = None  # PoseArray as received
         self._intersections_map = None  # np.ndarray (N, 2) in map_frame
@@ -283,7 +322,11 @@ class RoadFollower(Node):
         self.data = {"robot_id": self.robot_id}
 
         # --- Subscriptions ---
-        self.create_subscription(Path, gp("road_points_topic"), self._path_callback, 10)
+        if self.road_goal_source == "path":
+            self.create_subscription(Path, gp("road_points_topic"), self._path_callback, 10)
+        else:
+            carrot_msg = Path if self.carrot_type == "path" else Marker
+            self.create_subscription(carrot_msg, gp("carrot_topic"), self._carrot_callback, 10)
         self.create_subscription(
             PoseArray, gp("intersections_topic"), self._intersections_callback, latched
         )
@@ -310,7 +353,10 @@ class RoadFollower(Node):
         self.get_logger().info(
             f"Road follower initialised (backend={self.nav_backend}, map_frame={self.map_frame}, "
             f"robot_frame={self.robot_frame}, waypoint frame={self.waypoint_src_frame}).\n"
-            f"Road topic: {gp('road_points_topic')}, intersections: {gp('intersections_topic')}, "
+            f"Road goal: {self.road_goal_source} "
+            f"({gp('carrot_topic') if self.road_goal_source == 'carrot' else gp('road_points_topic')}), "
+            f"ahead {self.road_goal_min_ahead}-{self.road_goal_max_ahead} m; "
+            f"intersections: {gp('intersections_topic')}, "
             f"GPS file: {self.gps_file_name}\n"
             f"Thresholds: enter={self.enter_threshold} m, exit={self.exit_threshold} m, "
             f"waypoint={self.gps_threshold} m, route offset={self.road_goal_max_route_offset} m, "
@@ -541,16 +587,54 @@ class RoadFollower(Node):
         if not msg.poses:
             return
         self._latest_road_path = msg
-        self._last_road_path_time = self._now()
-        if self.state == self.STATE_ROAD and self._road_goal_needs_update(msg):
-            self._send_road_goal()
+        self._road_input()
 
-    def _road_goal_needs_update(self, path_msg) -> bool:
+    def _carrot_callback(self, msg):
+        """One road-centre point (Marker) or the last pose of a Path -> (x, y) in map_frame."""
+        if isinstance(msg, Path):
+            if not msg.poses:
+                return
+            src = msg.poses[-1]
+        else:
+            src = PoseStamped()
+            src.header = msg.header
+            src.pose = msg.pose
+        xy = self._pose_to_map(src)
+        if xy is None:
+            return
+        self._latest_carrot = smooth(self._latest_carrot, xy, self.road_goal_smoothing)
+        self._road_input()
+
+    def _road_input(self):
+        """A new road observation arrived: refresh the ROAD goal when it moved enough."""
+        self._last_road_path_time = self._now()
+        if self.state != self.STATE_ROAD:
+            return
+        candidate = self._road_goal_candidate()
+        if candidate is not None and self._road_goal_needs_update(candidate[:2]):
+            self._send_road_goal(candidate)
+
+    def _road_goal_candidate(self):
+        """(x, y, yaw) of the next ROAD goal in map_frame, or None."""
+        pose = self._robot_pose()
+        if pose is None:
+            return None
+        rob_xy, yaw = pose[:2], pose[2]
+        if self.road_goal_source == "carrot":
+            if self._latest_carrot is None:
+                return None
+            return select_carrot_goal(
+                self._latest_carrot, rob_xy, yaw, self.road_goal_min_ahead, self.road_goal_max_ahead
+            )
+        if self._latest_road_path is None or not self._latest_road_path.poses:
+            return None
+        pts = [self._pose_to_map(p) for p in self._latest_road_path.poses]
+        pts = [p for p in pts if p is not None]
+        return select_path_goal(pts, rob_xy, yaw, self.road_goal_min_ahead, self.road_goal_max_ahead)
+
+    def _road_goal_needs_update(self, goal_xy) -> bool:
         if not self._goal_active or self._last_road_goal is None:
             return True
-        goal_xy = self._pose_to_map(path_msg.poses[-1])
-        if goal_xy is None:
-            return False
         moved = math.hypot(goal_xy[0] - self._last_road_goal[0], goal_xy[1] - self._last_road_goal[1])
         return moved > self.road_goal_update_distance
 
@@ -705,8 +789,11 @@ class RoadFollower(Node):
         if not self._goal_active or self._last_road_goal is None:
             return
         d = math.hypot(rob_xy[0] - self._last_road_goal[0], rob_xy[1] - self._last_road_goal[1])
-        if d < self.gps_threshold:
-            self.get_logger().info(f"Road goal reached ({d:.2f} m); next path update re-sends.")
+        if d < self.road_goal_reached_distance:
+            self.get_logger().info(
+                f"Road goal reached ({d:.2f} m); the next road observation re-sends.",
+                throttle_duration_sec=2.0,
+            )
             self._goal_active = False
 
     def _closest_intersection(self, rob_xy):
@@ -829,31 +916,31 @@ class RoadFollower(Node):
                 return False
         if self.road_goal_reject_behind:
             pose = self._robot_pose()
-            if pose is not None:
-                dx, dy = goal_xy[0] - pose[0], goal_xy[1] - pose[1]
-                if dx * math.cos(pose[2]) + dy * math.sin(pose[2]) < 0.0:
-                    self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
-                    return False
+            if pose is not None and is_behind(goal_xy, pose[:2], pose[2]):
+                self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
+                return False
         return True
 
-    def _send_road_goal(self):
-        if (
-            self.state != self.STATE_ROAD
-            or self._latest_road_path is None
-            or not self._latest_road_path.poses
-        ):
+    def _send_road_goal(self, candidate=None):
+        if self.state != self.STATE_ROAD:
             return
-        pose_stamped = self._latest_road_path.poses[-1]
-        pose_stamped.header.stamp = self.get_clock().now().to_msg()
-        goal_xy = self._pose_to_map(pose_stamped)
-        if goal_xy is None:
-            self.get_logger().warn("Road goal frame not transformable to map_frame yet; skipping.")
+        if candidate is None:
+            candidate = self._road_goal_candidate()
+        if candidate is None:
             return
+        goal_xy = candidate[:2]
         if not self._road_goal_valid(goal_xy):
             return
+        pose_stamped = PoseStamped()
+        pose_stamped.header.stamp = self.get_clock().now().to_msg()
+        pose_stamped.header.frame_id = self.map_frame
+        pose_stamped.pose.position.x, pose_stamped.pose.position.y = float(goal_xy[0]), float(goal_xy[1])
+        pose_stamped.pose.orientation.z = math.sin(candidate[2] / 2.0)
+        pose_stamped.pose.orientation.w = math.cos(candidate[2] / 2.0)
         self.get_logger().info(
-            f"Road goal: ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) in {self.map_frame} "
-            f"(from {pose_stamped.header.frame_id})"
+            f"Road goal ({self.road_goal_source}): ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) "
+            f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg",
+            throttle_duration_sec=2.0,
         )
         self._goal_active = True
         self._threshold_triggered = False
