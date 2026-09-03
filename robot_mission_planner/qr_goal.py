@@ -5,8 +5,8 @@ qr_goal: turn a Robotour goal QR code into a route_planner goal.
 The competition hands the goal over as a QR code whose payload is a geo URI
 (RFC 5870), e.g. ``geo:48.8016394,16.8011145``. This node reads the robot camera,
 decodes QR codes with OpenCV, parses the payload and publishes the position as a
-latched ``geographic_msgs/GeoPointStamped`` on ``/route_planner/goal`` - the
-``route_planner`` node then plans from the robot's fix to it. The same payload can
+latched ``geographic_msgs/GeoPointStamped`` on ``/qr_goal/goal`` - ``road_follower``
+then asks ``route_planner`` for a route from its fix to it and follows it. The same payload can
 be typed in on ``~/text`` (see ``qr_goal_send``) for the loading-zone goal, which
 the team receives in the service area.
 
@@ -182,7 +182,7 @@ def main(args=None):
             self.process_rate = float(p("process_rate", 4.0).value)  # Hz, frames above are dropped
             confirm_frames = int(p("confirm_frames", 2).value)
             republish_after = float(p("republish_after_s", 30.0).value)
-            self.goal_topic = p("goal_topic", "/route_planner/goal").value
+            self.goal_topic = p("goal_topic", "/qr_goal/goal").value
             self.goal_frame_id = p("goal_frame_id", "wgs84").value
             text_topic = p("text_topic", "~/text").value
             detections_topic = p("detections_topic", "~/detections").value

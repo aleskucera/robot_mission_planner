@@ -3,7 +3,7 @@
 qr_goal_send: enter a Robotour goal by hand.
 
     qr_goal_send "geo:50.1103476,14.4159857"      # through the qr_goal node (~/text)
-    qr_goal_send 50.1103476,14.4159857 --direct   # straight to /route_planner/goal
+    qr_goal_send 50.1103476,14.4159857 --direct   # straight to /qr_goal/goal (no qr_goal node)
 
 The competition gives the team the loading-zone QR in the service area, so the
 payload can be typed in instead of shown to the camera. Same parser as the node.
@@ -25,7 +25,7 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--direct", action="store_true", help="publish GeoPointStamped on --goal-topic instead"
     )
-    ap.add_argument("--goal-topic", default="/route_planner/goal")
+    ap.add_argument("--goal-topic", default="/qr_goal/goal")
     ap.add_argument("--frame-id", default="wgs84")
     ap.add_argument("--wait", type=float, default=5.0, help="s to wait for a subscriber before publishing")
     args = ap.parse_args(argv)
