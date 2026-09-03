@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Robotour goal QR reader: camera -> geo:lat,lon -> /route_planner/goal (GeoPointStamped).
+       The 2026-09-02 record list names /camera/image_color/compressed; check the real camera
+       topic on the robot (pylon camera on the jetson) before relying on the default. -->
+  <arg name="image_topic" default="/camera/image_color/compressed" />
+  <arg name="image_transport" default="compressed" />       <!-- compressed | raw -->
+  <arg name="process_rate" default="4.0" />                 <!-- Hz: decode at most this often -->
+  <arg name="confirm_frames" default="2" />                 <!-- consecutive frames before a goal -->
+  <arg name="republish_after_s" default="30.0" />           <!-- same code again only after this -->
+  <arg name="goal_topic" default="/route_planner/goal" />
+  <arg name="goal_frame_id" default="wgs84" />
+  <arg name="text_topic" default="~/text" />                <!-- manual entry, see qr_goal_send -->
+  <arg name="detections_topic" default="~/detections" />
+  <arg name="publish_annotated" default="false" />          <!-- ~/image_annotated for rqt -->
+  <arg name="enabled" default="true" />                     <!-- ~/enable (SetBool) toggles it -->
+
+  <node pkg="robot_mission_planner" exec="qr_goal" name="qr_goal" output="screen">
+    <param name="image_topic" value="$(var image_topic)" />
+    <param name="image_transport" value="$(var image_transport)" />
+    <param name="process_rate" value="$(var process_rate)" />
+    <param name="confirm_frames" value="$(var confirm_frames)" />
+    <param name="republish_after_s" value="$(var republish_after_s)" />
+    <param name="goal_topic" value="$(var goal_topic)" />
+    <param name="goal_frame_id" value="$(var goal_frame_id)" />
+    <param name="text_topic" value="$(var text_topic)" />
+    <param name="detections_topic" value="$(var detections_topic)" />
+    <param name="publish_annotated" value="$(var publish_annotated)" />
+    <param name="enabled" value="$(var enabled)" />
+  </node>
+</launch>

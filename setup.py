@@ -27,6 +27,8 @@ setup(
              'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main',
              'road_follower = robot_mission_planner.road_follower:main',
              'road_follower_simple = robot_mission_planner.road_follower_simple:main',
+             'qr_goal = robot_mission_planner.qr_goal:main',
+             'qr_goal_send = robot_mission_planner.qr_goal_send:main',
      ],
    },
 )
