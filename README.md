@@ -16,6 +16,17 @@ path_centerline    ──/predicted_path_ls (Path)───┤
 GPX mission (map_data viewer "Paths only") ──────┘
 ```
 
+Mission mode (no `gps_file`): the follower starts **IDLE** and waits for a QR goal
+(`/qr_goal/goal`, see *QR goal input*). It then goes **PLANNING**: it asks `route_planner`'s
+`PlanRoute` action for a paths-only route from its own GNSS fix to the goal (`plan_retries`
+attempts, `plan_retry_delay` apart, back to IDLE on failure), logs the accepted goal (an
+audible signal will be added here), waits `start_delay` (5 s) and then follows the route
+with the ROAD/GPS logic below. Within `goal_reached_radius` (5 m) of the last waypoint it
+stops the commander, reports **ARRIVED** and returns to IDLE for the next goal; QR goals that
+arrive in any other state than IDLE are ignored. States are on `~/state`, mission events
+(`GOAL:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `PLAN_FAILED:…`, `IDLE`) on
+`~/event`. A `gps_file` bypasses all of this and follows the file from the start.
+
 * **ROAD** state: a goal on the visually detected road is sent to the commander (`goto`),
   re-sent only when it moved more than `road_goal_update_distance` or the previous goal was
   reached (`road_goal_reached_distance`). The goal comes from `road_goal_source`:
@@ -101,8 +112,8 @@ transforms separately.
 
 Robotour hands the goal over as a QR code with a geo URI payload (`geo:lat,lon`, RFC 5870).
 `qr_goal` reads the robot camera, decodes QR codes with OpenCV, and publishes the position as a
-latched `geographic_msgs/GeoPointStamped` on `/route_planner/goal`, which makes `route_planner`
-plan from the robot's fix to it. A payload must be decoded in `confirm_frames` consecutive
+latched `geographic_msgs/GeoPointStamped` on `/qr_goal/goal`; `road_follower` picks it up when
+idle, asks `route_planner` for a route and follows it (see the mission states above). A payload must be decoded in `confirm_frames` consecutive
 processed frames and is published once (again only after `republish_after_s`).
 
 ```bash
