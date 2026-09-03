@@ -49,7 +49,7 @@ import yaml
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geographic_msgs.msg import GeoPose
-from geometry_msgs.msg import PoseArray, PoseStamped
+from geometry_msgs.msg import Point, PoseArray, PoseStamped
 from nav2_msgs.action import FollowGPSWaypoints, FollowWaypoints, NavigateToPose
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
@@ -84,6 +84,13 @@ def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[
     y = (n + alt_m) * math.cos(lat) * math.sin(lon)
     z = (n * (1.0 - _WGS84_E2) + alt_m) * math.sin(lat)
     return x, y, z
+
+
+def marker_point_in_header_frame(marker: Marker, point):
+    """A Marker ``points[]`` entry expressed in ``marker.header.frame_id`` (they are relative to ``marker.pose``)."""
+    m = numpify(marker.pose)
+    x, y, z = transform_xyz(m, point.x, point.y, point.z)
+    return Point(x=float(x), y=float(y), z=float(z))
 
 
 def transform_xyz(matrix: np.ndarray, x: float, y: float, z: float = 0.0) -> tuple[float, float, float]:
@@ -596,9 +603,14 @@ class RoadFollower(Node):
                 return
             src = msg.poses[-1]
         else:
+            # build_point_cloud's per-frame /cloud_hull_center_marker is a SPHERE with the
+            # centre in pose.position; build_map's accumulated /map_hull_center_marker is a
+            # SPHERE_LIST whose newest centre is the last of points[] (pose is identity).
             src = PoseStamped()
             src.header = msg.header
             src.pose = msg.pose
+            if msg.points:
+                src.pose.position = marker_point_in_header_frame(msg, msg.points[-1])
         xy = self._pose_to_map(src)
         if xy is None:
             return
