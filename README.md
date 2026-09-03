@@ -27,8 +27,12 @@ GPX mission (map_data viewer "Paths only") ──────┘
   predicted path is extrapolated along its last segment): `crl_commander` treats a goal inside
   its 2.5 m arrival box as already reached and would stop. The selection is pure geometry in
   `road_goal.py` (`tests/test_road_goal.py`).
+  Only a *usable* observation (goal ahead of the robot and within
+  `road_goal_max_route_offset` of the route) counts as "road seen": a carrot behind the
+  robot or a path off the route does not keep ROAD mode alive, so `road_path_timeout`
+  hands over to the GPS route instead of leaving a stale goal in the commander.
 * **GPS** state: entered when the robot is within `intersection_enter_threshold` of an OSM
-  intersection, when no road path arrived for `road_path_timeout` seconds, or when the
+  intersection, when no usable road observation arrived for `road_path_timeout` seconds, or when the
   commander reports `STUCK` (`stuck_fallback_to_gps`). The next `gps_sequence_window`
   GPX waypoints are sent as a sequence. Left again once the robot is farther than
   `intersection_exit_threshold` from every intersection **and** has passed the

@@ -618,12 +618,17 @@ class RoadFollower(Node):
         self._road_input()
 
     def _road_input(self):
-        """A new road observation arrived: refresh the ROAD goal when it moved enough."""
-        self._last_road_path_time = self._now()
-        if self.state != self.STATE_ROAD:
-            return
+        """
+        A new road observation arrived. Only a *usable* one (a goal ahead of the robot, on
+        the route) counts as "the road is there": a carrot behind the robot or a path off
+        the route must not keep ROAD mode alive with a stale goal, it should let the
+        ``road_path_timeout`` fallback take the robot along the GPS route instead.
+        """
         candidate = self._road_goal_candidate()
-        if candidate is not None and self._road_goal_needs_update(candidate[:2]):
+        if candidate is None or not self._road_goal_valid(candidate[:2], quiet=self.state != self.STATE_ROAD):
+            return
+        self._last_road_path_time = self._now()
+        if self.state == self.STATE_ROAD and self._road_goal_needs_update(candidate[:2]):
             self._send_road_goal(candidate)
 
     def _road_goal_candidate(self):
@@ -915,21 +920,23 @@ class RoadFollower(Node):
             self._goal_handle = None
         self._goal_active = False
 
-    def _road_goal_valid(self, goal_xy) -> bool:
+    def _road_goal_valid(self, goal_xy, quiet: bool = False) -> bool:
         """Sanity-check a road goal against the planned route and the robot heading."""
         if self.road_goal_max_route_offset > 0 and self._route_a.size:
             off = distance_to_polyline(goal_xy, self._route_a, self._route_b)
             if off > self.road_goal_max_route_offset:
-                self.get_logger().warn(
-                    f"Road goal rejected: {off:.1f} m off the planned route "
-                    f"(> {self.road_goal_max_route_offset} m)",
-                    throttle_duration_sec=2.0,
-                )
+                if not quiet:
+                    self.get_logger().warn(
+                        f"Road goal rejected: {off:.1f} m off the planned route "
+                        f"(> {self.road_goal_max_route_offset} m)",
+                        throttle_duration_sec=2.0,
+                    )
                 return False
         if self.road_goal_reject_behind:
             pose = self._robot_pose()
             if pose is not None and is_behind(goal_xy, pose[:2], pose[2]):
-                self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
+                if not quiet:
+                    self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
                 return False
         return True
 
