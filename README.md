@@ -16,8 +16,17 @@ path_centerline    ──/predicted_path_ls (Path)───┤
 GPX mission (map_data viewer "Paths only") ──────┘
 ```
 
-* **ROAD** state: the last pose of the road path is sent as the navigation goal, re-sent only
-  when it moved more than `road_goal_update_distance` or the previous goal was reached.
+* **ROAD** state: a goal on the visually detected road is sent to the commander (`goto`),
+  re-sent only when it moved more than `road_goal_update_distance` or the previous goal was
+  reached (`road_goal_reached_distance`). The goal comes from `road_goal_source`:
+  `carrot` (default) drives at the convex-hull centre of the road points in the current lidar
+  frame (`carrot_topic`, `/cloud_hull_center_marker` from `build_point_cloud`; or a `Path`'s
+  last pose with `carrot_type=path`), `path` takes the fitted `/predicted_path_ls` from
+  `path_predictor`. Both keep the goal between `road_goal_min_ahead` and `road_goal_max_ahead`
+  in front of the robot (a closer observation is pushed out along its bearing, a short
+  predicted path is extrapolated along its last segment): `crl_commander` treats a goal inside
+  its 2.5 m arrival box as already reached and would stop. The selection is pure geometry in
+  `road_goal.py` (`tests/test_road_goal.py`).
 * **GPS** state: entered when the robot is within `intersection_enter_threshold` of an OSM
   intersection, when no road path arrived for `road_path_timeout` seconds, or when the
   commander reports `STUCK` (`stuck_fallback_to_gps`). The next `gps_sequence_window`
@@ -60,7 +69,12 @@ Telemetry POSTs are disabled in both nodes unless `telemetry_url` is set.
 ```bash
 ros2 launch robot_mission_planner road_and_gps_follower.launch \
     gps_file:=stromovka_planned.gpx nav_backend:=commander map_frame:=FP_ENU0
+# predicted-path goal instead of the carrot:
+ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=path
 ```
+
+Never run `road_follower_simple` at the same time: the commander sends an empty path to
+`path_follower` whenever it has no goal, so two clients of `/follow_path` fight each other.
 
 All frames, topics, services and thresholds are launch arguments — see
 `launch/road_and_gps_follower.launch`. `gps_file` is absolute or relative to `data/`.
@@ -78,3 +92,9 @@ Replay `/tf`, `/lookahead_pose` and `/fixposition/odometry_llh` from a Helhest b
 serves the two services and republishes `/lookahead_pose` as `/predicted_path_ls`. Note that
 rosbag2 does not reliably replay `/tf_static` to late subscribers — broadcast the bag's static
 transforms separately.
+
+## Tests
+
+```bash
+PYTHONPATH=. python -m pytest tests   # pure-geometry tests, no ROS needed
+```
