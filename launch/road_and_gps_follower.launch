@@ -23,7 +23,7 @@
   <arg name="gps_fix_topic" default="/fixposition/odometry_llh" />
   <arg name="goal_waypoint_topic" default="/goal_waypoint" />
   <arg name="goal_sequence_topic" default="/goal_sequence" />
-  <arg name="commander_state_topic" default="/commander/state" />
+  <arg name="commander_state_topic" default="/crl_commander/state" />  <!-- crl_commander publishes ~/state -->
   <arg name="state_topic" default="~/state" />
   <arg name="active_intersection_topic" default="~/active_intersection" />
   <arg name="switch_mode_service" default="/crl_commander/switch_mode" />

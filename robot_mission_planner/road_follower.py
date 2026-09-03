@@ -119,7 +119,7 @@ class RoadFollower(Node):
         self.declare_parameter("gps_filtered_topic", "")  # optional second NavSatFix (telemetry)
         self.declare_parameter("goal_waypoint_topic", "/goal_waypoint")  # commander: operator goal
         self.declare_parameter("goal_sequence_topic", "/goal_sequence")  # commander: latched PoseArray
-        self.declare_parameter("commander_state_topic", "/commander/state")
+        self.declare_parameter("commander_state_topic", "/crl_commander/state")
         self.declare_parameter("state_topic", "~/state")  # latched String: ROAD | GPS:<reason>
         # latched PoseStamped in map_frame of the intersection that triggered GPS mode
         # (empty frame_id = none); the map_data viewer draws the enter/exit circles around it
