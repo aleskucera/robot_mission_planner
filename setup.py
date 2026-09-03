@@ -26,6 +26,7 @@ setup(
      'console_scripts': [
              'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main',
              'road_follower = robot_mission_planner.road_follower:main',
+             'road_follower_simple = robot_mission_planner.road_follower_simple:main',
      ],
    },
 )

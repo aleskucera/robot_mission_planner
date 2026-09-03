@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Plain road following: road-centre point/path straight into the controller.
+     No intersections, no GPS - for that use road_and_gps_follower.launch. -->
+<launch>
+  <!-- carrot: drive at a single point, by default the convex-hull centre of the road
+       points in the current frame (~15 Hz, always a few m ahead). No polynomial fit,
+       so nothing to go wild near a junction - but the target is the centroid of all
+       visible road, which in a junction is the middle of the junction.
+       path: the original, the fitted /predicted_path_ls from path_predictor. -->
+  <arg name="goal_mode" default="carrot" />
+
+  <!-- goal_mode=carrot -->
+  <!-- /cloud_hull_center_marker (Marker, build_point_cloud, per frame) or
+       /map_hull_center_path (Path, build_map, only updates when a marker is added,
+       so the robot can arrive and then have nothing to drive to). -->
+  <arg name="carrot_topic" default="/cloud_hull_center_marker" />
+  <arg name="carrot_type" default="marker" />          <!-- marker | path -->
+  <arg name="carrot_smoothing" default="0.0" />        <!-- 0 = raw, 0.8 = damped -->
+
+  <!-- goal_mode=path: predicted_path_ls extends ~3 m past the newest road-centre
+       marker. The raw build_map paths end at the robot, so pure pursuit would call
+       the goal reached straight away - use carrot mode for those instead. -->
+  <arg name="road_points_topic" default="/predicted_path_ls" />
+
+  <!-- follow_path -> path_follower (the live route); navigate_to_pose -> a global
+       planner, which nothing currently serves on this robot. -->
+  <arg name="output_mode" default="follow_path" />
+
+  <node pkg="robot_mission_planner" exec="road_follower_simple" name="road_follower_simple" output="screen">
+      <param name="goal_mode" value="$(var goal_mode)" />
+      <param name="road_points_topic" value="$(var road_points_topic)" />
+      <param name="output_mode" value="$(var output_mode)" />
+      <param name="min_poses" value="2" />
+
+      <!-- carrot: the synthetic path runs from the robot to the target -->
+      <param name="carrot_topic" value="$(var carrot_topic)" />
+      <param name="carrot_type" value="$(var carrot_type)" />
+      <param name="carrot_smoothing" value="$(var carrot_smoothing)" />
+      <param name="map_frame" value="FP_ENU0" />       <!-- path_follower's map_frame -->
+      <param name="base_frame" value="base_link" />
+      <param name="carrot_spacing" value="0.25" />     <!-- m between synthetic poses -->
+      <param name="min_carrot_distance" value="1.0" /> <!-- m; nearer = wait, don't spin -->
+      <param name="max_carrot_distance" value="12.0" /><!-- m; farther = artefact -->
+
+      <!-- follow_path: a new goal preempts the old one once either bound is crossed -->
+      <param name="resend_period" value="1.0" />     <!-- s since the last goal -->
+      <param name="resend_goal_move" value="0.5" />  <!-- m the path end has moved -->
+
+      <!-- navigate_to_pose: remaining distance at which the next goal is requested -->
+      <param name="distance_threshold" value="2.0" />
+  </node>
+</launch>
