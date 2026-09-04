@@ -231,10 +231,10 @@ def main(args=None):
             try:
                 image = _decode_image_msg(msg, self.transport)
             except Exception as e:  # noqa: BLE001
-                self.get_logger().warn(f"cannot decode image: {e}", throttle_duration_sec=10.0)
+                self.get_logger().warning(f"cannot decode image: {e}", throttle_duration_sec=10.0)
                 return
             if image is None:
-                self.get_logger().warn("cannot decode image (unknown encoding?)", throttle_duration_sec=10.0)
+                self.get_logger().warning("cannot decode image (unknown encoding?)", throttle_duration_sec=10.0)
                 return
             found = decode_qr_with_points(image)
             payloads = [t for t, _ in found]
@@ -263,7 +263,7 @@ def main(args=None):
             if latlon is None:
                 if payload not in self._warned_payloads:
                     self._warned_payloads.add(payload)
-                    self.get_logger().warn(f"ignoring {source} payload without a geo position: {payload!r}")
+                    self.get_logger().warning(f"ignoring {source} payload without a geo position: {payload!r}")
                 return
             lat, lon = latlon
             msg = GeoPointStamped()
@@ -293,7 +293,7 @@ def main(args=None):
 
         def _heartbeat(self):
             if self._frames == 0:
-                self.get_logger().warn(f"no images received on {self.image_topic} yet", throttle_duration_sec=60.0)
+                self.get_logger().warning(f"no images received on {self.image_topic} yet", throttle_duration_sec=60.0)
 
     rclpy.init(args=args)
     node = QrGoal()

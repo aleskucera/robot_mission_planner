@@ -256,7 +256,7 @@ class GPXFollower(Node):
             if response.status_code == 200:
                 self.get_logger().info("Data sent successfully!")
             elif response.status_code == 202:
-                self.get_logger().warn("Failed with status: Missing path.")
+                self.get_logger().warning("Failed with status: Missing path.")
                 self.send_data_url("path")
             else:
                 self.get_logger().error(f"Failed to send data. Status code: {response.status_code}")
@@ -301,16 +301,16 @@ class GPXFollower(Node):
         result = future.result().result
         if self.navigate_through_poses:
             if result.error_msg:
-                self.get_logger().warn(f"Error message: {result.error_msg}")
+                self.get_logger().warning(f"Error message: {result.error_msg}")
                 if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
                     self.send_path(self.waypoints[self.current_waypoint :])
                     return
             else:
-                self.get_logger().warn("Finished without error")
+                self.get_logger().warning("Finished without error")
         else:
             if result.missed_waypoints:
-                self.get_logger().warn(f"Missed waypoints: {result.missed_waypoints}")
+                self.get_logger().warning(f"Missed waypoints: {result.missed_waypoints}")
                 if self.loop and self.current_waypoint < len(self.waypoints) - 1:
                     self.get_logger().info(f"Starting plan again from the last waypoint.")
                     self.send_path(self.waypoints[self.current_waypoint :])
@@ -334,14 +334,14 @@ class GPXFollower(Node):
             cancel_future = self.goal_handle.cancel_goal_async()
             cancel_future.add_done_callback(self.cancel_response_callback)
         else:
-            self.get_logger().warn("No goal to cancel")
+            self.get_logger().warning("No goal to cancel")
 
     def cancel_response_callback(self, future):
         cancel_result = future.result()
         if cancel_result.goals_canceling:
             self.get_logger().info("Goal successfully canceled")
         else:
-            self.get_logger().warn("Failed to cancel goal")
+            self.get_logger().warning("Failed to cancel goal")
 
     def gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}

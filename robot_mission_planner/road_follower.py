@@ -408,7 +408,7 @@ class RoadFollower(Node):
             self._gps_action_client.wait_for_server()
         else:
             if not self._cli_switch_mode.wait_for_service(timeout_sec=5.0):
-                self.get_logger().warn(
+                self.get_logger().warning(
                     f"Commander service {gp('switch_mode_service')} not available yet; "
                     "mode switches will be retried when needed."
                 )
@@ -441,7 +441,7 @@ class RoadFollower(Node):
                 target, source, rclpy.time.Time(), rclpy.duration.Duration(seconds=timeout)
             )
         except Exception as e:  # TransformException and friends
-            self.get_logger().warn(f"TF {target} <- {source} unavailable: {e}", throttle_duration_sec=5.0)
+            self.get_logger().warning(f"TF {target} <- {source} unavailable: {e}", throttle_duration_sec=5.0)
             return None
         return numpify(tf_msg.transform)
 
@@ -1023,7 +1023,7 @@ class RoadFollower(Node):
     def _qr_goal_callback(self, msg):
         lat, lon = msg.position.latitude, msg.position.longitude
         if self.state != self.STATE_IDLE:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"QR goal {lat:.7f}, {lon:.7f} ignored: follower is {self._state_text()}",
                 throttle_duration_sec=5.0,
             )
@@ -1115,7 +1115,7 @@ class RoadFollower(Node):
         self._cancel_plan_timer()
         self._plan_goal_handle = None
         if self._plan_attempt < self.plan_retries:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"Route planning failed ({why}); retrying in {self.plan_retry_delay:.0f} s"
             )
             self._one_shot(self.plan_retry_delay, self._request_route)
@@ -1186,7 +1186,7 @@ class RoadFollower(Node):
             off = distance_to_polyline(goal_xy, self._route_a, self._route_b)
             if off > self.road_goal_max_route_offset:
                 if not quiet:
-                    self.get_logger().warn(
+                    self.get_logger().warning(
                         f"Road goal rejected: {off:.1f} m off the planned route "
                         f"(> {self.road_goal_max_route_offset} m)",
                         throttle_duration_sec=2.0,
@@ -1196,7 +1196,7 @@ class RoadFollower(Node):
             pose = self._robot_pose()
             if pose is not None and is_behind(goal_xy, pose[:2], pose[2]):
                 if not quiet:
-                    self.get_logger().warn("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
+                    self.get_logger().warning("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
                 return False
         return True
 
@@ -1246,7 +1246,7 @@ class RoadFollower(Node):
         end = start + self.gps_sequence_window if self.gps_sequence_window > 0 else len(self.waypoints)
         remaining = self.waypoints[start:end]
         if not remaining:
-            self.get_logger().warn("No remaining GPS waypoints to send (end of mission).")
+            self.get_logger().warning("No remaining GPS waypoints to send (end of mission).")
             self._goal_active = False
             return
         self._gps_start_index = start
@@ -1299,7 +1299,7 @@ class RoadFollower(Node):
             return
         cli = self._cli_configure_seq
         if not cli.service_is_ready():
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"{cli.srv_name} not ready; publishing the sequence anyway (commander must be "
                 "configured with sequence_source=topic)."
             )
@@ -1340,7 +1340,7 @@ class RoadFollower(Node):
             return
         cli = self._cli_switch_mode
         if not cli.service_is_ready():
-            self.get_logger().warn(f"{cli.srv_name} not ready; cannot switch to '{mode}'.")
+            self.get_logger().warning(f"{cli.srv_name} not ready; cannot switch to '{mode}'.")
             return
         self._requested_mode = mode
         self._requested_mode_time = self._now()
@@ -1401,7 +1401,7 @@ class RoadFollower(Node):
                 self.current_waypoint_index = 0
                 self._send_gps_goal()
         elif status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().warn("Goal aborted.")
+            self.get_logger().warning("Goal aborted.")
 
     # ------------------------------------------------------------------ shutdown
     def save_waypoint_index(self):

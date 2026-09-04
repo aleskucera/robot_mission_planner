@@ -140,7 +140,7 @@ class RoadFollowerSimple(Node):
     # -- input -------------------------------------------------------------
     def _path_callback(self, msg):
         if len(msg.poses) < self.min_poses:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"Path has {len(msg.poses)} poses (< min_poses={self.min_poses}), ignoring.",
                 throttle_duration_sec=5.0)
             return
@@ -176,7 +176,7 @@ class RoadFollowerSimple(Node):
                 "waiting for one further ahead.", throttle_duration_sec=5.0)
             return
         if distance > self.max_carrot_distance:
-            self.get_logger().warn(
+            self.get_logger().warning(
                 f"Carrot {distance:.2f} m away (> {self.max_carrot_distance} m); ignoring.",
                 throttle_duration_sec=5.0)
             return
@@ -210,7 +210,7 @@ class RoadFollowerSimple(Node):
             out = do_transform_point(stamped, tf)
             return (out.point.x, out.point.y)
 
-        self.get_logger().warn(
+        self.get_logger().warning(
             f"No transform '{header.frame_id}' -> '{self.map_frame}' for the carrot.",
             throttle_duration_sec=5.0)
         return None
@@ -221,7 +221,7 @@ class RoadFollowerSimple(Node):
                 self.map_frame, self.base_frame, rclpy.time.Time(),
                 timeout=Duration(seconds=0.1))
         except tf2_ros.TransformException as ex:
-            self.get_logger().warn(f"No robot pose in '{self.map_frame}': {ex}",
+            self.get_logger().warning(f"No robot pose in '{self.map_frame}': {ex}",
                                    throttle_duration_sec=5.0)
             return None
         return (tf.transform.translation.x, tf.transform.translation.y)
