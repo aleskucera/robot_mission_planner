@@ -29,6 +29,9 @@
   <arg name="switch_mode_service" default="/crl_commander/switch_mode" />
   <arg name="configure_sequence_service" default="/crl_commander/configure_sequence_mode" />
 
+  <!-- Visualisation: diameter of a route waypoint sphere on gps_waypoints_markers, m -->
+  <arg name="waypoint_marker_scale" default="0.8" />
+
   <!-- Thresholds -->
   <arg name="intersection_enter_threshold" default="5.0" />  <!-- m: switch ROAD -> GPS -->
   <arg name="intersection_exit_threshold" default="6.0" />   <!-- m: from every intersection to switch back -->
@@ -90,6 +93,7 @@
       <param name="active_intersection_topic" value="$(var active_intersection_topic)" />
       <param name="switch_mode_service" value="$(var switch_mode_service)" />
       <param name="configure_sequence_service" value="$(var configure_sequence_service)" />
+      <param name="waypoint_marker_scale" value="$(var waypoint_marker_scale)" />
 
       <param name="file" value="$(var gps_file)" />
       <param name="qr_goal_topic" value="$(var qr_goal_topic)" />

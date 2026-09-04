@@ -153,6 +153,9 @@ class RoadFollower(Node):
             "configure_sequence_service", "/crl_commander/configure_sequence_mode"
         )
         self.declare_parameter("markers_topic", "gps_waypoints_markers")
+        # Sphere diameter of a route waypoint, m. Waypoints are ~3 m apart, so anything
+        # near that merges them into a tube that hides the robot and the road.
+        self.declare_parameter("waypoint_marker_scale", 0.8)
 
         # --- GPS following ---
         self.declare_parameter("file", "")
@@ -305,6 +308,7 @@ class RoadFollower(Node):
             else:
                 self._gps_action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
 
+        self._waypoint_marker_scale = float(gp("waypoint_marker_scale"))
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
         self._state_pub = self.create_publisher(String, gp("state_topic"), latched)
         self._event_pub = self.create_publisher(String, gp("event_topic"), latched)
@@ -644,7 +648,7 @@ class RoadFollower(Node):
             marker.action = Marker.ADD
             marker.pose.position.x, marker.pose.position.y = xy
             marker.pose.orientation.w = 1.0
-            marker.scale.x = marker.scale.y = marker.scale.z = 2.0
+            marker.scale.x = marker.scale.y = marker.scale.z = self._waypoint_marker_scale
             marker.color.a = 0.8
             if i == self.current_waypoint_index:
                 marker.color.g = 1.0
