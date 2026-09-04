@@ -28,6 +28,10 @@ def main(argv=None) -> int:
     ap.add_argument("--goal-topic", default="/qr_goal/goal")
     ap.add_argument("--frame-id", default="wgs84")
     ap.add_argument("--wait", type=float, default=5.0, help="s to wait for a subscriber before publishing")
+    ap.add_argument(
+        "--hold", type=float, default=2.0,
+        help="s to keep the latched publisher alive afterwards, for subscribers that "
+             "match late (any subscriber ends --wait, not necessarily road_follower)")
     args = ap.parse_args(argv)
 
     latlon = parse_geo_uri(args.payload)
@@ -67,8 +71,10 @@ def main(argv=None) -> int:
             print(f"warning: nobody subscribed to {where} within {args.wait:g} s", file=sys.stderr)
         pub.publish(msg)
         print(f"published {latlon[0]:.7f}, {latlon[1]:.7f} on {where}")
+        # The sample is only retained while this process lives, so hold the node open:
+        # --wait ends at the *first* subscriber, which may not be the one that matters.
         t0 = time.monotonic()
-        while time.monotonic() - t0 < 0.5:
+        while time.monotonic() - t0 < args.hold:
             rclpy.spin_once(node, timeout_sec=0.1)
     finally:
         node.destroy_node()
