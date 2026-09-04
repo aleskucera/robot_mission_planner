@@ -28,6 +28,15 @@
   <exec_depend>crl_commander</exec_depend>
   <!-- map_data_interfaces provides the PlanRoute action road_follower uses for QR goals. -->
   <exec_depend>map_data_interfaces</exec_depend>
+  <!-- mission_hud publishes the rviz text panels; rviz2 + the overlay plugin draw them
+       (mission_rviz.launch.py). Only needed where the operator view runs. -->
+  <exec_depend>rviz_2d_overlay_msgs</exec_depend>
+  <exec_depend>rviz_2d_overlay_plugins</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <!-- mission_rviz.launch.py can bring up the Helhest URDF for the RobotModel display. -->
+  <exec_depend>helhest_description</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <exec_depend>python3-gpxpy</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>  <!-- qr_goal -->

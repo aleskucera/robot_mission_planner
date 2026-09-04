@@ -106,7 +106,8 @@ Replay `/tf`, `/lookahead_pose` and `/fixposition/odometry_llh` from a Helhest b
 `map_data osm_cloud.launch.py` (geodetic mode) and this node with a stand-in commander that
 serves the two services and republishes `/lookahead_pose` as `/predicted_path_ls`. Note that
 rosbag2 does not reliably replay `/tf_static` to late subscribers — broadcast the bag's static
-transforms separately.
+transforms separately. `demo/run_bag_test.sh` in the workspace does all of this; `RVIZ=1`
+adds the operator view below and the camera / segmentation / status topics it needs.
 
 ## QR goal input
 
@@ -132,6 +133,46 @@ Parameters: `image_topic`, `image_transport` (`compressed` | `raw`), `process_ra
 default camera is the Odin (`/odin1/image/compressed`); the Basler
 (`/camera/image_color/compressed`) is a backup that is not mounted. Parser and decoder are
 pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
+
+## Operator view (rviz)
+
+```bash
+ros2 launch robot_mission_planner mission_rviz.launch.py
+```
+
+`rviz/robotour.rviz` + the `mission_hud` node: the Odin camera and the segmented path
+across the top, the mission scene below, and the numbers as overlays on the 3D view.
+Nothing in it commands the robot.
+
+* **Top left panel** — Odin RGB (`/odin1/image/compressed`).
+* **Top right panel** — `/centerline/centerline_cost`, the mono8 distance transform the
+  centerline network produces: 0 at the road centre, ~252 at its edge, 255 off-road, so
+  the road reads as the dark band. rviz2 takes the image transport from the topic name,
+  so a compressed stream is named in full and there is no transport property to set.
+* **3D view** — the Helhest URDF (`helhest_description`, started here as
+  `robot_state_publisher` unless `description:=false`), the planned route and its
+  waypoints, the current `/goal_waypoint` and GPS sequence, the active intersection, the
+  OSM footway cloud and intersections from `osm_cloud`, `/terrain_occupancy` as the
+  traversability costmap, `/predicted_path_ls` and the hull-centre carrot. Off by default:
+  the dense `/terrain_map` cloud and the `/road_cloud` / `/road_map_2` clouds (cloudini
+  transport, which only the robot has).
+* **Overlays** — left: follower state, route progress, commander state, last mission
+  event, planner status, QR goal; right: e-stop (the panel turns red when it is in),
+  battery, the hottest motor temperature, GNSS position and fix. `mission_hud` builds
+  both from the mission and robot topics, every one a parameter; route progress comes
+  from the route path and tf, looked up at "latest" so a bag replay works unchanged.
+
+Useful arguments: `rviz:=false` (HUD only, e.g. rviz runs on a laptop), `hud:=false`,
+`description:=false` (something else publishes `/robot_description`), `robot_body:=true`
+(a placeholder box instead of the URDF), `text_size:=`, `config:=`.
+
+The dock arrangement is the `QMainWindow State` hex at the end of the config, which
+`rviz/make_layout.py` regenerates — needed after renaming either Image display, since
+rviz matches the dock to the display name:
+
+```bash
+python3 rviz/make_layout.py --write robotour.rviz
+```
 
 ## Tests
 

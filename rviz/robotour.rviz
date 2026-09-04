@@ -1,0 +1,804 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Mission1
+        - /Perception1
+      Splitter Ratio: 0.6000000238418579
+    Tree Height: 301
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 10
+      Class: rviz_default_plugins/Grid
+      Color: 60; 60; 70
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 100
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Class: rviz_default_plugins/RobotModel
+          Collision Enabled: false
+          Description File: ""
+          Description Source: Topic
+          Description Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /robot_description
+          Enabled: true
+          Links:
+            All Links Enabled: true
+            Expand Joint Details: false
+            Expand Link Details: false
+            Expand Tree: false
+            Link Tree Style: Links in Alphabetic Order
+            base_footprint:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            base_link:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            base_link_center:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            battery:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            camera_front:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            camera_rear:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            dgps_aux_antenna:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            dgps_main_antenna:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            imu:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            left_motor:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            left_wheel:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            left_wheel_holder:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            livox_frame:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            livox_front_frame:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+            rear_motor:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            rear_wheel:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            right_motor:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            right_wheel:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+            right_wheel_holder:
+              Alpha: 1
+              Show Axes: false
+              Show Trail: false
+              Value: true
+          Mass Properties:
+            Inertia: false
+            Mass: false
+          Name: RobotModel (/robot_description)
+          TF Prefix: ""
+          Update Interval: 0
+          Value: true
+          Visual Enabled: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: Robot body (mission_hud)
+          Namespaces:
+            {}
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /mission_hud/robot_body
+          Value: false
+        - Class: rviz_default_plugins/TF
+          Enabled: true
+          Filter (blacklist): ""
+          Filter (whitelist): ""
+          Frame Timeout: 15
+          Frames:
+            All Enabled: false
+            FP_CAM:
+              Value: true
+            FP_ECEF:
+              Value: true
+            FP_ENU0:
+              Value: true
+            FP_IMUH:
+              Value: true
+            FP_POI:
+              Value: true
+            FP_POISH:
+              Value: true
+            FP_VRTK:
+              Value: true
+            base_footprint:
+              Value: true
+            base_link:
+              Value: true
+            base_link_center:
+              Value: true
+            battery:
+              Value: true
+            camera_front:
+              Value: true
+            camera_rear:
+              Value: true
+            dgps_aux_antenna:
+              Value: true
+            dgps_main_antenna:
+              Value: true
+            imu:
+              Value: true
+            imu_link:
+              Value: true
+            left_motor:
+              Value: true
+            left_wheel:
+              Value: true
+            left_wheel_holder:
+              Value: true
+            livox_frame:
+              Value: true
+            livox_front_frame:
+              Value: true
+            odin1_base_link:
+              Value: true
+            odin1_camera_link:
+              Value: true
+            odin1_camera_link_optical_frame:
+              Value: true
+            odom:
+              Value: true
+            odom_odin:
+              Value: true
+            rear_motor:
+              Value: true
+            rear_wheel:
+              Value: true
+            right_motor:
+              Value: true
+            right_wheel:
+              Value: true
+            right_wheel_holder:
+              Value: true
+          Marker Scale: 1.5
+          Name: TF
+          Show Arrows: false
+          Show Axes: true
+          Show Names: false
+          Tree:
+            FP_ECEF:
+              FP_ENU0:
+                {}
+              FP_POI:
+                FP_IMUH:
+                  {}
+                FP_POISH:
+                  {}
+                FP_VRTK:
+                  FP_CAM:
+                    {}
+                  base_link:
+                    base_footprint:
+                      {}
+                    base_link_center:
+                      {}
+                    battery:
+                      {}
+                    camera_front:
+                      {}
+                    camera_rear:
+                      {}
+                    dgps_aux_antenna:
+                      {}
+                    dgps_main_antenna:
+                      {}
+                    imu:
+                      {}
+                    left_motor:
+                      {}
+                    left_wheel:
+                      {}
+                    left_wheel_holder:
+                      {}
+                    livox_frame:
+                      {}
+                    livox_front_frame:
+                      {}
+                    odin1_base_link:
+                      imu_link:
+                        {}
+                      odin1_camera_link:
+                        odin1_camera_link_optical_frame:
+                          {}
+                      odom_odin:
+                        odom:
+                          {}
+                    rear_motor:
+                      {}
+                    rear_wheel:
+                      {}
+                    right_motor:
+                      {}
+                    right_wheel:
+                      {}
+                    right_wheel_holder:
+                      {}
+          Update Interval: 0
+          Value: true
+      Enabled: true
+      Name: Robot
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 170; 0
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Billboards
+          Line Width: 0.4000000059604645
+          Name: Planned route (route_planner)
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /route_planner/route_path
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Route waypoints (road_follower)
+          Namespaces:
+            gps_waypoints: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /gps_waypoints_markers
+          Value: true
+        - Alpha: 1
+          Axes Length: 1
+          Axes Radius: 0.10000000149011612
+          Class: rviz_default_plugins/Pose
+          Color: 0; 255; 0
+          Enabled: true
+          Head Length: 0.800000011920929
+          Head Radius: 0.5
+          Name: Navigation goal (/goal_waypoint)
+          Shaft Length: 2
+          Shaft Radius: 0.20000000298023224
+          Shape: Arrow
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /goal_waypoint
+          Value: true
+        - Alpha: 1
+          Arrow Length: 0.30000001192092896
+          Axes Length: 1.5
+          Axes Radius: 0.15000000596046448
+          Class: rviz_default_plugins/PoseArray
+          Color: 255; 25; 0
+          Enabled: true
+          Head Length: 0.07000000029802322
+          Head Radius: 0.029999999329447746
+          Name: GPS goal sequence (/goal_sequence)
+          Shaft Length: 0.23000000417232513
+          Shaft Radius: 0.009999999776482582
+          Shape: Axes
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /goal_sequence
+          Value: true
+        - Alpha: 1
+          Axes Length: 3
+          Axes Radius: 0.30000001192092896
+          Class: rviz_default_plugins/Pose
+          Color: 255; 25; 0
+          Enabled: true
+          Head Length: 0.30000001192092896
+          Head Radius: 0.10000000149011612
+          Name: Active intersection
+          Shaft Length: 1
+          Shaft Radius: 0.05000000074505806
+          Shape: Axes
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /road_follower/active_intersection
+          Value: true
+      Enabled: true
+      Name: Mission
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 0.6000000238418579
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 4096
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: OSM footways (/osm_grid)
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 2
+          Size (m): 0.009999999776482582
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /osm_grid
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Intersections
+          Namespaces:
+            intersections: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /intersection_markers
+          Value: true
+      Enabled: true
+      Name: Map (osm_cloud)
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 0.5
+          Binary representation: false
+          Binary threshold: 100
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: true
+          Enabled: true
+          Name: Traversability (/terrain_occupancy)
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /terrain_occupancy
+          Update Topic:
+            Depth: 10
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /terrain_occupancy_updates
+          Use Timestamp: false
+          Value: true
+        - Alpha: 0.800000011920929
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: AxisColor
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 4096
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Terrain cloud (/terrain_map)
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.05000000074505806
+          Style: Flat Squares
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /terrain_map
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 0; 200; 255
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Billboards
+          Line Width: 0.30000001192092896
+          Name: Predicted road path (/predicted_path_ls)
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /predicted_path_ls
+          Value: true
+        - Class: rviz_default_plugins/Marker
+          Enabled: true
+          Name: Road centres / carrot (/map_hull_center_marker)
+          Namespaces:
+            hull_centers: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_hull_center_marker
+          Value: true
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 4096
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Road cloud (/road_cloud)
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.009999999776482582
+          Style: Points
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /road_cloud
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 4096
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Road map (/road_map_2)
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.009999999776482582
+          Style: Points
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /road_map_2
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+      Enabled: true
+      Name: Perception
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Odin camera
+      Normalize Range: true
+      Topic:
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /odin1/image/compressed
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Segmented path
+      Normalize Range: true
+      Topic:
+        Depth: 2
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /centerline/centerline_cost
+      Value: true
+    - Align Bottom: false
+      Background Alpha: 0.800000011920929
+      Background Color: 0; 0; 0
+      Class: rviz_2d_overlay_plugins/TextOverlay
+      Enabled: true
+      Foreground Alpha: 0.800000011920929
+      Foreground Color: 25; 255; 240
+      Invert Shadow: false
+      Name: HUD mission (top left)
+      Overtake BG Color Properties: false
+      Overtake FG Color Properties: false
+      Overtake Position Properties: false
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission_hud/mission
+      Value: true
+      font: DejaVu Sans Mono
+      height: 128
+      hor_alignment: left
+      hor_dist: 0
+      line width: 2
+      text size: 12
+      ver_alignment: top
+      ver_dist: 0
+      width: 128
+    - Align Bottom: false
+      Background Alpha: 0.800000011920929
+      Background Color: 0; 0; 0
+      Class: rviz_2d_overlay_plugins/TextOverlay
+      Enabled: true
+      Foreground Alpha: 0.800000011920929
+      Foreground Color: 25; 255; 240
+      Invert Shadow: false
+      Name: HUD status (top right)
+      Overtake BG Color Properties: false
+      Overtake FG Color Properties: false
+      Overtake Position Properties: false
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission_hud/status
+      Value: true
+      font: DejaVu Sans Mono
+      height: 128
+      hor_alignment: left
+      hor_dist: 0
+      line width: 2
+      text size: 12
+      ver_alignment: top
+      ver_dist: 0
+      width: 128
+  Enabled: true
+  Global Options:
+    Background Color: 30; 30; 34
+    Fixed Frame: FP_ENU0
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Angle: 4.004998207092285
+      Class: rviz_default_plugins/TopDownOrtho
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Scale: 25.335201263427734
+      Target Frame: base_link
+      Value: TopDownOrtho (rviz_default_plugins)
+      X: 0
+      Y: 0
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Distance: 80
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.05999999865889549
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05000000074505806
+        Invert Z Axis: false
+        Name: Top-down
+        Near Clip Distance: 0.009999999776482582
+        Pitch: 1.569700002670288
+        Target Frame: base_link
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 3.140000104904175
+      - Class: rviz_default_plugins/Orbit
+        Distance: 300
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.05999999865889549
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05000000074505806
+        Invert Z Axis: false
+        Name: Route overview (fixed frame)
+        Near Clip Distance: 0.009999999776482582
+        Pitch: 1.2000000476837158
+        Target Frame: FP_ENU0
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 3.140000104904175
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1040
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Odin camera:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd000000010000000000000168000003befc0200000003fc000000390000017f000000de01000018fa000000000200000002fb000000100044006900730070006c0061007900730100000000ffffffff000000c500fffffffb0000000a005600690065007700730100000000ffffffff0000009d00fffffffb00000016004f00640069006e002000630061006d00650072006101000001be0000011b0000001600fffffffb0000001c005300650067006d0065006e0074006500640020007000610074006801000002df000001180000001600ffffff0000060d000003be00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Segmented path:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1915
+  X: 2
+  Y: 37
