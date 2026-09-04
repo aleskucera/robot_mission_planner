@@ -1,0 +1,113 @@
+# Robotour mission pipeline, NUC side.  Start with:  tmuxinator start robotour
+#
+#   QR code -> qr_goal -> /qr_goal/goal -> road_follower (mission mode) -> route_planner
+#   -> follow the planned route: road following on the paths, GPS through intersections
+#   -> ARRIVED -> idle, waiting for the next QR goal.
+#
+# This is the mission layer only. Start it *on top of* the two sessions that own the
+# hardware and the driving stack:
+#   tmuxinator start tmux-launch   # zenoh router, fixposition (FP_ECEF/FP_ENU0 + base_link)
+#   tmuxinator start adam          # crl_commander, path follower, local planner, safety
+# and on the jetson:
+#   tmuxinator start robotour      # odin driver, cloud filters, path_centerline
+# The check window below says whether those are alive.
+#
+# Source: robot_mission_planner/tmuxinator/robotour-nuc.yml (symlinked into ~/.tmuxinator).
+
+name: robotour
+root: /home/robot/workspaces/helhest_ws
+
+startup_window: follower
+# ~/.rosrc sets rmw_zenoh + the router endpoints and sources helhest_ws.
+pre_window: export ROS_DISTRO=kilted; source ~/.rosrc
+
+windows:
+  # Is everything the mission needs alive? Left: our own GNSS/INS fix (the mission plans
+  # from it). Middle: the commander we drive through. Right: the jetson's camera, which
+  # arrives over zenoh -- no rate here means the jetson session is not up.
+  - check:
+      layout: even-horizontal
+      panes:
+        - |
+          sleep 2; ros2 topic hz /fixposition/odometry_llh
+        - |
+          sleep 2; ros2 topic echo /crl_commander/state
+        - |
+          sleep 2; ros2 topic hz /odin1/image/compressed
+
+  # OSM map -> /intersections (FP_ENU0), the rings road_follower switches to GPS in, and
+  # the /grid cloud for rviz. Loads the plain map: annotations are a planning-time thing.
+  - map:
+      panes:
+        - |
+          sleep 3
+          ros2 launch map_data osm_cloud.launch.py mapdata_file:=kralovska_obora.mapdata
+
+  # PlanRoute action server (/route_planner/plan_route): QR goal + our fix -> route on the
+  # map's footways. preload=true builds the graph at startup, so a plan takes ~10 ms.
+  # Planned routes are written to ~/missions as GPX. annotations=auto merges
+  # <map>.annotations.json when one sits next to the map (kralovska_obora has none;
+  # stromovka.annotations.json deletes 838 ways -- use annotations:=none with that map).
+  - planner:
+      panes:
+        - |
+          sleep 3
+          ros2 launch map_data route_planner.launch.py mapdata_file:=kralovska_obora.mapdata
+
+  # Goal QR reader on the Odin camera (1600x1296 jpeg, decoded at 4 Hz): a geo:lat,lon
+  # code seen twice in a row -> /qr_goal/goal. Codes are ignored unless the follower is
+  # idle. Second pane: type the goal in by hand when the code is only on paper.
+  - qr:
+      panes:
+        - |
+          sleep 3
+          ros2 launch robot_mission_planner qr_goal.launch
+        - |
+          history -s 'ros2 run robot_mission_planner qr_goal_send "geo:50.1103476,14.4159857"'
+          history -s 'ros2 service call /qr_goal/enable std_srvs/srv/SetBool "{data: false}"'
+          echo "press Up to recall: enable/disable the reader, or send a goal by hand"
+
+  # The mission state machine: IDLE -> PLANNING -> 5 s pause -> ROAD/GPS -> ARRIVED -> IDLE.
+  # Mission mode is the default (no gps_file); pass gps_file:=<route.gpx> to replay a
+  # pre-planned route instead. Road goals come from the per-frame hull centre
+  # (/cloud_hull_center_marker); the alternatives are the accumulated map centre
+  # (carrot_topic:=/map_hull_center_marker) and the fitted path (road_goal_source:=path).
+  - follower:
+      panes:
+        - |
+          sleep 5
+          ros2 launch robot_mission_planner road_and_gps_follower.launch
+          # ros2 launch robot_mission_planner road_and_gps_follower.launch carrot_topic:=/map_hull_center_marker
+          # ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=path
+        - |
+          sleep 6; ros2 topic echo /road_follower/event --field data
+
+  # What the mission is doing: follower mode, the road goal source, and the QR reader.
+  - monitor:
+      layout: tiled
+      panes:
+        - |
+          sleep 6; ros2 topic echo /road_follower/state --field data
+        - |
+          sleep 6; ros2 topic hz /cloud_hull_center_marker
+        - |
+          sleep 6; ros2 topic hz /predicted_path_ls
+        - |
+          sleep 6; ros2 topic echo /qr_goal/detections
+
+  # Nothing records by itself. Left pane: the mission bag (small, everything the pipeline
+  # produces -- record_nuc.yaml does not list the follower/QR topics yet). Right pane: the
+  # standard full robot bag.
+  - record:
+      layout: even-horizontal
+      panes:
+        - |
+          history -s 'ros2 bag record -o ~/bags/robotour_$(date +%F-%H%M) /tf /tf_static /fixposition/odometry_llh /fixposition/ypr /crl_commander/state /crl_commander/goal /crl_commander/goal_sequence /goal_waypoint /goal_sequence /road_follower/state /road_follower/event /road_follower/active_intersection /qr_goal/goal /qr_goal/text /qr_goal/detections /route_planner/route /route_planner/route_path /intersections /predicted_path_ls /map_hull_center_path /map_hull_center_marker /cloud_hull_center_marker'
+          echo "mission bag: press Up + Enter"
+        - |
+          history -s 'ros2 launch helhest_bringup record_nuc.launch'
+          echo "full robot bag: press Up + Enter"
+
+  - shell:
+      panes:
+        - cd
