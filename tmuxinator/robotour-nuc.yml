@@ -34,6 +34,8 @@ windows:
   # every route is saved to ~/missions as GPX. annotations=auto merges
   # <map>.annotations.json when one sits next to the map (kralovska_obora has none;
   # stromovka.annotations.json deletes 838 ways -- use annotations:=none with that map).
+  # The planner routes over footways only; add roads with highway_types:=footway,road
+  # (KN.mapdata is 172 footways + 84 roads and needs them).
   - planner:
       panes:
         - |
