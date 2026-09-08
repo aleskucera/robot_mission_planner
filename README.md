@@ -83,16 +83,20 @@ Telemetry POSTs are disabled in both nodes unless `telemetry_url` is set.
 
 ```bash
 ros2 launch robot_mission_planner road_and_gps_follower.launch \
-    gps_file:=stromovka_planned.gpx nav_backend:=commander map_frame:=FP_ENU0
+    gps_file:=stromovka_planned.gpx nav_backend:=commander
 # predicted-path goal instead of the carrot:
 ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=path
+# a whole different parameter set:
+ros2 launch robot_mission_planner road_and_gps_follower.launch config:=/path/to/my.yaml
 ```
 
 Never run `road_follower_simple` at the same time: the commander sends an empty path to
 `path_follower` whenever it has no goal, so two clients of `/follow_path` fight each other.
 
-All frames, topics, services and thresholds are launch arguments — see
-`launch/road_and_gps_follower.launch`. `gps_file` is absolute or relative to `data/`.
+All frames, topics, services and thresholds are parameters and live in
+`config/road_and_gps_follower.yaml` (one config file per launch file in `config/`); the launch
+files only pick the file and pass through the few arguments above. `gps_file` is absolute or
+relative to `data/`.
 
 ## Producing the mission GPX
 
@@ -127,9 +131,10 @@ ros2 run robot_mission_planner qr_goal_send "geo:50.1103476,14.4159857"
 ros2 run robot_mission_planner qr_goal_send 50.1103476,14.4159857 --direct   # no qr_goal running
 ```
 
-Parameters: `image_topic`, `image_transport` (`compressed` | `raw`), `process_rate` (Hz),
-`confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`, `detections_topic`,
-`publish_annotated` (`~/image_annotated` with the code outlined, for rqt), `enabled`. The
+Parameters (in `config/qr_goal.yaml`): `image_topic`, `image_transport` (`compressed` | `raw`),
+`process_rate` (Hz), `confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`,
+`detections_topic`, `publish_annotated` (`~/image_annotated` with the code outlined, for rqt),
+`enabled`. The
 default camera is the Odin (`/odin1/image/compressed`); the Basler
 (`/camera/image_color/compressed`) is a backup that is not mounted. Parser and decoder are
 pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
@@ -140,7 +145,8 @@ pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
 ros2 launch robot_mission_planner mission_rviz.launch.py
 ```
 
-`rviz/robotour.rviz` + the `mission_hud` node: the Odin camera and the segmented path
+`rviz/robotour.rviz` + the `mission_hud` node (parameters in `config/mission_hud.yaml`): the
+Odin camera and the segmented path
 across the top, the mission scene below, and the numbers as overlays on the 3D view.
 Nothing in it commands the robot.
 
