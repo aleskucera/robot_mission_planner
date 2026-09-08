@@ -1,0 +1,36 @@
+# mission_hud (mission_rviz.launch.py): the overlays of the operator view. Nothing here
+# drives the robot; the node only subscribes.
+/**:
+  ros__parameters:
+    # Frames the HUD measures route progress in (same defaults as road_follower).
+    map_frame: "FP_ENU0"
+    robot_frame: "base_link"
+
+    # Inputs; an empty topic simply leaves that line of the panel empty.
+    follower_state_topic: "/road_follower/state"
+    follower_event_topic: "/road_follower/event"
+    commander_state_topic: "/crl_commander/state"
+    planner_status_topic: "/route_planner/status"
+    route_path_topic: "/route_planner/route_path"
+    qr_goal_topic: "/qr_goal/goal"
+    estop_topic: "/estop_active"
+    battery_topic: "/battery_state"
+    temperature_topic: "/temperatures"
+    gps_fix_topic: "/fixposition/odometry_llh"
+
+    # Panel look. Sizes are in pixels of the 3D render panel.
+    text_size: 12.0
+    panel_width: 620
+    panel_max_chars: 60             # lines are truncated rather than wrapped
+    panel_margin: 8
+    panel_bg_alpha: 0.55
+    font: "DejaVu Sans Mono"
+    markup: true                    # false if a future rviz build draws the markup verbatim
+    rate: 4.0                       # Hz
+
+    # Placeholder body box: only useful with description:=false and nothing else publishing
+    # /robot_description (the rviz RobotModel display is off to match).
+    robot_body: false
+    robot_body_size: [0.9, 0.7, 0.35]
+    robot_body_offset_z: 0.25
+    robot_body_color: [0.25, 0.6, 1.0, 0.5]

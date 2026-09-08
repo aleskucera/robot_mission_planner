@@ -1,135 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+  <!-- All frames, topics, services and thresholds live in the config file; the arguments
+       below are the ones that are switched from the command line and override it. -->
+  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/road_and_gps_follower.yaml" />
+
   <!-- Path to the GPX or YAML file with the pre-planned waypoints (absolute, or relative to
-       robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only"). -->
-  <arg name="gps_file" default="" />    <!-- empty = mission mode: wait for QR goals -->
-  <arg name="robot_id" default="helhest-robot" />
-  <arg name="loop" default="false" />    <!-- file routes only; mission routes never loop -->
+       robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only").
+       Empty = mission mode: wait for QR goals. -->
+  <arg name="gps_file" default="" />
 
   <!-- Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2" -->
   <arg name="nav_backend" default="commander" />
-  <arg name="use_utm" default="true" />                  <!-- nav2 only: UTM goals vs lat/lon goals -->
 
-  <!-- Frames (Helhest/Fixposition defaults). map_frame is the fixed frame all distances are
-       measured in; earth_frame is the ECEF frame GPX waypoints are published in. -->
-  <arg name="map_frame" default="FP_ENU0" />
-  <arg name="robot_frame" default="base_link" />
-  <arg name="earth_frame" default="FP_ECEF" />
-  <arg name="utm_frame" default="utm" />                 <!-- nav2 + use_utm only -->
-
-  <!-- Topics / services -->
-  <arg name="road_points_topic" default="/predicted_path_ls" />   <!-- path_centerline/predict_path -->
-  <arg name="intersections_topic" default="/intersections" />     <!-- map_data/osm_cloud -->
-  <arg name="gps_fix_topic" default="/fixposition/odometry_llh" />
-  <arg name="goal_waypoint_topic" default="/goal_waypoint" />
-  <arg name="goal_sequence_topic" default="/goal_sequence" />
-  <arg name="commander_state_topic" default="/crl_commander/state" />  <!-- crl_commander publishes ~/state -->
-  <arg name="state_topic" default="~/state" />
-  <arg name="active_intersection_topic" default="~/active_intersection" />
-  <arg name="switch_mode_service" default="/crl_commander/switch_mode" />
-  <arg name="configure_sequence_service" default="/crl_commander/configure_sequence_mode" />
-
-  <!-- Visualisation: diameter of a route waypoint sphere on gps_waypoints_markers, m -->
-  <arg name="waypoint_marker_scale" default="0.8" />
-
-  <!-- Thresholds -->
-  <arg name="intersection_enter_threshold" default="5.0" />  <!-- m: switch ROAD -> GPS -->
-  <arg name="intersection_exit_threshold" default="6.0" />   <!-- m: from every intersection to switch back -->
-  <arg name="gps_goal_threshold" default="4.0" />            <!-- m: waypoint / road goal reached -->
-  <arg name="road_goal_update_distance" default="1.0" />     <!-- m: min shift of the road goal to re-send it -->
-  <arg name="require_waypoint_reached_to_exit_gps" default="false" />
-  <arg name="gps_exit_require_passed" default="true" />       <!-- leave GPS only after passing the intersection along the route -->
-  <arg name="gps_exit_min_waypoints" default="0" />           <!-- waypoints to advance before leaving GPS mode -->
-  <arg name="gps_sequence_window" default="10" />             <!-- waypoints sent per sequence (0 = all remaining) -->
-
-  <!-- Road goal source. carrot: the convex-hull centre of the road points in the current
-       lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose
-       with carrot_type:=path). path: the fitted/extrapolated /predicted_path_ls from
-       path_predictor. The goal is always kept road_goal_min_ahead in front of the robot:
-       crl_commander treats a goal inside its 2.5 m arrival box as reached and stops. -->
-  <arg name="road_goal_source" default="carrot" />           <!-- carrot | path -->
+  <!-- Road goal source: carrot (convex-hull centre of the road points, carrot_topic) or
+       path (the fitted /predicted_path_ls from path_predictor). -->
+  <arg name="road_goal_source" default="carrot" />
   <arg name="carrot_topic" default="/cloud_hull_center_marker" />
-  <arg name="carrot_type" default="marker" />                <!-- marker | path -->
-  <arg name="road_goal_min_ahead" default="4.0" />           <!-- m: never send a closer goal -->
-  <arg name="road_goal_max_ahead" default="12.0" />          <!-- m: farther = projection artefact -->
-  <arg name="road_goal_smoothing" default="0.0" />           <!-- carrot: 0 = raw, 0.8 = damped -->
-  <arg name="road_goal_reached_distance" default="2.5" />    <!-- m: forget the active road goal -->
-
-  <!-- Mission (Robotour): QR goal -> route_planner -> 5 s pause -> follow -> arrive -> idle -->
-  <arg name="qr_goal_topic" default="/qr_goal/goal" />     <!-- GeoPointStamped from qr_goal -->
-  <arg name="plan_route_action" default="/route_planner/plan_route" />
-  <arg name="plan_spacing" default="3.0" />                <!-- m between route waypoints -->
-  <arg name="plan_retries" default="3" />
-  <arg name="plan_retry_delay" default="5.0" />            <!-- s -->
-  <arg name="plan_timeout" default="60.0" />               <!-- s per attempt -->
-  <arg name="start_delay" default="5.0" />                 <!-- s: route received -> first command -->
-  <arg name="goal_reached_radius" default="5.0" />         <!-- m to the last waypoint = arrived -->
-  <arg name="arrival_index_window" default="3" />          <!-- waypoints from the end that count -->
-  <arg name="arrived_hold" default="0.0" />                <!-- s in ARRIVED before IDLE -->
-
-  <!-- Road-goal sanity and failure handling -->
-  <arg name="road_goal_max_route_offset" default="5.0" />     <!-- m: reject road goals farther from the planned route (0 = off) -->
-  <arg name="road_goal_reject_behind" default="true" />
-  <arg name="road_path_timeout" default="5.0" />              <!-- s without a road path -> GPS fallback (0 = off) -->
-  <arg name="stuck_fallback_to_gps" default="true" />         <!-- commander STUCK while road following -> GPS fallback -->
-  <arg name="service_timeout" default="3.0" />                <!-- s: commander service call watchdog -->
 
   <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" output="screen">
-      <param name="nav_backend" value="$(var nav_backend)" />
-      <param name="use_utm" value="$(var use_utm)" />
-
-      <param name="map_frame" value="$(var map_frame)" />
-      <param name="robot_frame" value="$(var robot_frame)" />
-      <param name="earth_frame" value="$(var earth_frame)" />
-      <param name="utm_frame" value="$(var utm_frame)" />
-
-      <param name="road_points_topic" value="$(var road_points_topic)" />
-      <param name="intersections_topic" value="$(var intersections_topic)" />
-      <param name="gps_fix_topic" value="$(var gps_fix_topic)" />
-      <param name="goal_waypoint_topic" value="$(var goal_waypoint_topic)" />
-      <param name="goal_sequence_topic" value="$(var goal_sequence_topic)" />
-      <param name="commander_state_topic" value="$(var commander_state_topic)" />
-      <param name="state_topic" value="$(var state_topic)" />
-      <param name="active_intersection_topic" value="$(var active_intersection_topic)" />
-      <param name="switch_mode_service" value="$(var switch_mode_service)" />
-      <param name="configure_sequence_service" value="$(var configure_sequence_service)" />
-      <param name="waypoint_marker_scale" value="$(var waypoint_marker_scale)" />
-
+      <param from="$(var config)" />
       <param name="file" value="$(var gps_file)" />
-      <param name="qr_goal_topic" value="$(var qr_goal_topic)" />
-      <param name="plan_route_action" value="$(var plan_route_action)" />
-      <param name="plan_spacing" value="$(var plan_spacing)" />
-      <param name="plan_retries" value="$(var plan_retries)" />
-      <param name="plan_retry_delay" value="$(var plan_retry_delay)" />
-      <param name="plan_timeout" value="$(var plan_timeout)" />
-      <param name="start_delay" value="$(var start_delay)" />
-      <param name="goal_reached_radius" value="$(var goal_reached_radius)" />
-      <param name="arrival_index_window" value="$(var arrival_index_window)" />
-      <param name="arrived_hold" value="$(var arrived_hold)" />
-      <param name="robot_id" value="$(var robot_id)" />
-      <param name="start" value="0" />
-      <param name="reverse" value="false" />
-      <param name="loop" value="$(var loop)" />
-
-      <param name="intersection_enter_threshold" value="$(var intersection_enter_threshold)" />
-      <param name="intersection_exit_threshold" value="$(var intersection_exit_threshold)" />
-      <param name="gps_goal_threshold" value="$(var gps_goal_threshold)" />
-      <param name="road_goal_update_distance" value="$(var road_goal_update_distance)" />
-      <param name="require_waypoint_reached_to_exit_gps" value="$(var require_waypoint_reached_to_exit_gps)" />
-      <param name="gps_exit_require_passed" value="$(var gps_exit_require_passed)" />
-      <param name="gps_exit_min_waypoints" value="$(var gps_exit_min_waypoints)" />
-      <param name="gps_sequence_window" value="$(var gps_sequence_window)" />
+      <param name="nav_backend" value="$(var nav_backend)" />
       <param name="road_goal_source" value="$(var road_goal_source)" />
       <param name="carrot_topic" value="$(var carrot_topic)" />
-      <param name="carrot_type" value="$(var carrot_type)" />
-      <param name="road_goal_min_ahead" value="$(var road_goal_min_ahead)" />
-      <param name="road_goal_max_ahead" value="$(var road_goal_max_ahead)" />
-      <param name="road_goal_smoothing" value="$(var road_goal_smoothing)" />
-      <param name="road_goal_reached_distance" value="$(var road_goal_reached_distance)" />
-      <param name="road_goal_max_route_offset" value="$(var road_goal_max_route_offset)" />
-      <param name="road_goal_reject_behind" value="$(var road_goal_reject_behind)" />
-      <param name="road_path_timeout" value="$(var road_path_timeout)" />
-      <param name="stuck_fallback_to_gps" value="$(var stuck_fallback_to_gps)" />
-      <param name="service_timeout" value="$(var service_timeout)" />
   </node>
 </launch>

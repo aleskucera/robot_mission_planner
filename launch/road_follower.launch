@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/road_follower.yaml" />
+
   <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" namespace="">
-      <param name="road_points_topic" value="/map_hull_center_path" />  <!--Topic publishing PoseArray of road points-->
-      <param name="distance_threshold" value="0.5" />          <!--Distance (m) to goal at which a new goal is requested-->
+      <param from="$(var config)" />
   </node>
 </launch>

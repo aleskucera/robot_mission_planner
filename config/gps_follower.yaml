@@ -1,0 +1,11 @@
+# gps_follower_ros2 (gps_follower.launch): plain GPX/YAML waypoint following through Nav2.
+# The launch file only overrides "file" (gps_follower.launch file:=...).
+/**:
+  ros__parameters:
+    file: "kn_demo_dense.gpx"       # GPX or YAML file with the waypoints
+    robot: "helhest-robot"          # for the web app
+    start: 0                        # start index of the waypoints
+    reverse: false                  # reverse the order of the waypoints
+    loop: true                      # when finished send the same path again (on failure, from the last waypoint)
+    use_utm: false                  # convert waypoints to UTM coordinates
+    navigate_through_poses: false   # not tested yet

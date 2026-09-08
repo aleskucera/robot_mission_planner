@@ -1,0 +1,87 @@
+# road_follower (road_and_gps_follower.launch): road following with GPS/mission fallback.
+# Everything the node reads lives here; the launch file only picks the file and the few
+# arguments that are switched from the command line (gps_file, nav_backend,
+# road_goal_source, carrot_topic).
+/**:
+  ros__parameters:
+    # Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2"
+    nav_backend: "commander"
+    use_utm: true                       # nav2 only: UTM goals vs lat/lon goals
+
+    # Frames (Helhest/Fixposition defaults). map_frame is the fixed frame all distances are
+    # measured in; earth_frame is the ECEF frame GPX waypoints are published in.
+    map_frame: "FP_ENU0"
+    robot_frame: "base_link"
+    earth_frame: "FP_ECEF"
+    utm_frame: "utm"                    # nav2 + use_utm only
+
+    # Topics / services
+    road_points_topic: "/predicted_path_ls"        # path_centerline/predict_path
+    intersections_topic: "/intersections"          # map_data/osm_cloud
+    gps_fix_topic: "/fixposition/odometry_llh"
+    gps_filtered_topic: ""                         # optional second NavSatFix (telemetry)
+    goal_waypoint_topic: "/goal_waypoint"
+    goal_sequence_topic: "/goal_sequence"
+    commander_state_topic: "/crl_commander/state"  # crl_commander publishes ~/state
+    state_topic: "~/state"
+    event_topic: "~/event"
+    active_intersection_topic: "~/active_intersection"
+    switch_mode_service: "/crl_commander/switch_mode"
+    configure_sequence_service: "/crl_commander/configure_sequence_mode"
+    markers_topic: "gps_waypoints_markers"
+    telemetry_url: ""                              # empty = no telemetry POSTs
+
+    # Visualisation: diameter of a route waypoint sphere on gps_waypoints_markers, m
+    waypoint_marker_scale: 0.8
+
+    # Route file: GPX or YAML with the pre-planned waypoints (absolute, or relative to
+    # robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only").
+    # Empty = mission mode: wait for QR goals. Overridden by the gps_file launch argument.
+    file: ""
+    robot_id: "helhest-robot"
+    start: 0                            # start index of the waypoints
+    reverse: false
+    loop: false                         # file routes only; mission routes never loop
+
+    # Thresholds
+    intersection_enter_threshold: 5.0   # m: switch ROAD -> GPS
+    intersection_exit_threshold: 6.0    # m: from every intersection to switch back
+    gps_goal_threshold: 4.0             # m: waypoint / road goal reached
+    lookahead_sync_window: 15           # waypoints searched for the closest one
+    road_goal_update_distance: 1.0      # m: min shift of the road goal to re-send it
+    require_waypoint_reached_to_exit_gps: false
+    gps_exit_require_passed: true       # leave GPS only after passing the intersection along the route
+    gps_exit_min_waypoints: 0           # waypoints to advance before leaving GPS mode
+    gps_sequence_window: 10             # waypoints sent per sequence (0 = all remaining)
+
+    # Road goal source. carrot: the convex-hull centre of the road points in the current
+    # lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose
+    # with carrot_type: path). path: the fitted/extrapolated /predicted_path_ls from
+    # path_predictor. The goal is always kept road_goal_min_ahead in front of the robot:
+    # crl_commander treats a goal inside its 2.5 m arrival box as reached and stops.
+    road_goal_source: "carrot"          # carrot | path
+    carrot_topic: "/cloud_hull_center_marker"
+    carrot_type: "marker"               # marker | path
+    road_goal_min_ahead: 4.0            # m: never send a closer goal
+    road_goal_max_ahead: 12.0           # m: farther = projection artefact
+    road_goal_smoothing: 0.0            # carrot: 0 = raw, 0.8 = damped
+    road_goal_reached_distance: 2.5     # m: forget the active road goal
+
+    # Mission (Robotour): QR goal -> route_planner -> 5 s pause -> follow -> arrive -> idle
+    qr_goal_topic: "/qr_goal/goal"      # GeoPointStamped from qr_goal
+    plan_route_action: "/route_planner/plan_route"
+    plan_spacing: 3.0                   # m between route waypoints
+    plan_retries: 3
+    plan_retry_delay: 5.0               # s
+    plan_timeout: 60.0                  # s per attempt
+    start_delay: 5.0                    # s: route received -> first command
+    goal_reached_radius: 5.0            # m to the last waypoint = arrived
+    arrival_index_window: 3             # waypoints from the end that count
+    arrived_hold: 0.0                   # s in ARRIVED before IDLE
+
+    # Road-goal sanity and failure handling
+    road_goal_max_route_offset: 5.0     # m: reject road goals farther from the planned route (0 = off)
+    road_goal_reject_behind: true
+    road_path_timeout: 5.0              # s without a road path -> GPS fallback (0 = off)
+    stuck_fallback_to_gps: true         # commander STUCK while road following -> GPS fallback
+    service_timeout: 3.0                # s: commander service call watchdog

@@ -13,6 +13,7 @@ setup(
      (os.path.join("share", package_name), ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob(os.path.join("launch", "*.launch"))),
         (os.path.join("share", package_name, "launch"), glob(os.path.join("launch", "*.py"))),
+        (os.path.join("share", package_name, "config"), glob(os.path.join("config", "*.yaml"))),
         (os.path.join("share", package_name, "data"), glob(os.path.join("data", "*.gpx"))),
         (os.path.join("share", package_name, "data"), glob(os.path.join("data", "*.yaml"))),
         (os.path.join("share", package_name, "rviz"), glob(os.path.join("rviz", "*.rviz"))),
