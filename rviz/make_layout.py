@@ -24,18 +24,22 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QDockWidget, QMainWindow, QWidget  # noqa: E402
 
-WIDTH, HEIGHT = 1920, 1080
-SIDE_WIDTH = 360      # Displays / Views column
-IMAGE_HEIGHT = 400    # the two camera panels
+# Sizes of the window the layout is built for. Qt rescales it to the real window, but
+# only within reason: restoring a 1080p layout on the jetson's 1600x900 VNC screen does
+# not fit and Qt drops the image docks into the left column instead, so build it at the
+# smaller size -- growing a layout works, shrinking one does not.
+DEFAULT_WIDTH, DEFAULT_HEIGHT = 1600, 900
+DEFAULT_SIDE_WIDTH = 320    # Displays / Views column
+DEFAULT_IMAGE_HEIGHT = 300  # the two camera panels
 # Panel names, and the Name: of the two Image displays, exactly as robotour.rviz spells them.
 SIDE = ["Displays", "Views"]
 IMAGES = ["Odin camera", "Segmented path"]
 
 
-def build() -> str:
+def build(width: int, height: int, side_width: int, image_height: int) -> str:
     app = QApplication(sys.argv[:1])
     win = QMainWindow()
-    win.resize(WIDTH, HEIGHT)
+    win.resize(width, height)
     win.setCentralWidget(QWidget())
 
     docks = {}
@@ -52,9 +56,9 @@ def build() -> str:
 
     win.show()
     app.processEvents()
-    win.resizeDocks([docks["Displays"]], [SIDE_WIDTH], Qt.Horizontal)
+    win.resizeDocks([docks["Displays"]], [side_width], Qt.Horizontal)
     win.resizeDocks([docks[n] for n in IMAGES], [2, 2], Qt.Horizontal)  # equal halves
-    win.resizeDocks([docks[n] for n in IMAGES], [IMAGE_HEIGHT] * 2, Qt.Vertical)
+    win.resizeDocks([docks[n] for n in IMAGES], [image_height] * 2, Qt.Vertical)
     docks["Displays"].raise_()
     app.processEvents()
 
@@ -66,8 +70,12 @@ def build() -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", help="rviz config to patch in place")
+    ap.add_argument("--width", type=int, default=DEFAULT_WIDTH)
+    ap.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    ap.add_argument("--side-width", type=int, default=DEFAULT_SIDE_WIDTH)
+    ap.add_argument("--image-height", type=int, default=DEFAULT_IMAGE_HEIGHT)
     args = ap.parse_args()
-    state = build()
+    state = build(args.width, args.height, args.side_width, args.image_height)
     if not args.write:
         print(state)
         return

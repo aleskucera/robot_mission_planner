@@ -729,22 +729,24 @@ Visualization Manager:
       Class: rviz_default_plugins/TF
   Value: true
   Views:
+    # Chase camera on the robot. Everything else lives hundreds of metres from the FP_ENU0
+    # origin, so a view anchored to the fixed frame shows an empty grid.
     Current:
-      Angle: 4.004998207092285
-      Class: rviz_default_plugins/TopDownOrtho
-      Enable Stereo Rendering:
-        Stereo Eye Separation: 0.05999999865889549
-        Stereo Focal Distance: 1
-        Swap Stereo Eyes: false
-        Value: false
-      Invert Z Axis: false
+      Class: rviz_default_plugins/ThirdPersonFollower
       Name: Current View
-      Near Clip Distance: 0.009999999776482582
-      Scale: 25.335201263427734
       Target Frame: base_link
-      Value: TopDownOrtho (rviz_default_plugins)
-      X: 0
-      Y: 0
+      Distance: 25
+      Pitch: 0.6
+      Yaw: 3.14
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Near Clip Distance: 0.01
+      Value: ThirdPersonFollower (rviz_default_plugins)
     Saved:
       - Class: rviz_default_plugins/Orbit
         Distance: 80
@@ -789,16 +791,16 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1040
+  Height: 900
   Hide Left Dock: false
   Hide Right Dock: true
   Odin camera:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd000000010000000000000168000003befc0200000003fc000000390000017f000000de01000018fa000000000200000002fb000000100044006900730070006c0061007900730100000000ffffffff000000c500fffffffb0000000a005600690065007700730100000000ffffffff0000009d00fffffffb00000016004f00640069006e002000630061006d00650072006101000001be0000011b0000001600fffffffb0000001c005300650067006d0065006e0074006500640020007000610074006801000002df000001180000001600ffffff0000060d000003be00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd000000020000000000000140000002defc0200000001fc00000132000002de0000002c01000018fa000000000200000002fb000000100044006900730070006c0061007900730100000000ffffffff0000001300fffffffb0000000a005600690065007700730100000000ffffffff0000001300ffffff00000002000003bb0000012cfc0100000002fb00000016004f00640069006e002000630061006d0065007200610100000000000001db0000003a00fffffffb0000001c005300650067006d0065006e0074006500640020007000610074006801000001e1000001da0000003a00ffffff00000275000002de00000004000000040000000800000008fc00000000
   Segmented path:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1915
-  X: 2
-  Y: 37
+  Width: 1600
+  X: 0
+  Y: 0
