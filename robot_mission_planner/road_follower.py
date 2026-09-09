@@ -1221,6 +1221,7 @@ class RoadFollower(Node):
         self._gps_entry_index = self.current_waypoint_index
         self._target_intersection(intersection_xy)
         self._hand_over("GPS")
+        self._publish_state()  # do not let the state topic lag the decision by a tick
 
     def _target_intersection(self, intersection_xy):
         """
@@ -1245,6 +1246,7 @@ class RoadFollower(Node):
         self._gps_node_index = None
         self._last_road_goal = None
         self._hand_over("ROAD")
+        self._publish_state()
 
     def _hand_over(self, mode):
         """
@@ -1616,6 +1618,13 @@ class RoadFollower(Node):
         if pose is not None:
             self._sync_waypoint_index_to_closest(pose[:2])
         start = self.current_waypoint_index
+        # The commander starts a sequence at nearest+1 (sequence_start_from_next), so the
+        # first driven goal is ~2 waypoints (6 m) past the current index. A one-waypoint
+        # sequence therefore has nothing to drive to: the commander answers STOP at once and
+        # the follower re-sends it every tick (the robot stands 1-2 m short of the end).
+        # Always send at least the last two waypoints.
+        if len(self.waypoints) >= 2:
+            start = min(start, len(self.waypoints) - 2)
         end = start + self.gps_sequence_window if self.gps_sequence_window > 0 else len(self.waypoints)
         remaining = self.waypoints[start:end]
         if not remaining:

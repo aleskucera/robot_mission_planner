@@ -61,6 +61,9 @@
     # Waypoints sent per sequence. 0 = the whole remaining route: mission routes never
     # loop and every window end is a STOP + re-send (a stop every 30 m with 10).
     gps_sequence_window: 0
+    # Note: the commander starts each sequence at nearest+1 (sequence_start_from_next), and
+    # the follower's own index is already nearest+1 at 4 m, so the first driven goal of a
+    # sequence is ~2 waypoints (6 m) ahead. At least the last two waypoints are always sent.
     # ROAD <-> GPS hand-over: the commander is switched goto <-> sequence directly (its own
     # transition cancels the old goal), with no STOP and no pause. stop_between_modes: true
     # restores the old STOP + 1 s behaviour; transition_delay adds a pause (s) before the
