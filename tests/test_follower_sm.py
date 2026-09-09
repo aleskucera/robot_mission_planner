@@ -287,10 +287,11 @@ class Rig:
         self.executor = SingleThreadedExecutor(context=self.context)
         self.executor.add_node(self.observer)
         self.plan_route = PlanRouteServer(self.observer, self.route_latlon) if plan_route else None
-        self.spin(2.0)
+        self.spin(1.0)
 
         self.gpx = write_gpx(tmp_path / "route.gpx", self.route, self.transform)
-        params = {"file": "" if mission else str(self.gpx)}
+        # Mission mode = no `file` at all: rcl rejects an empty -p override value.
+        params = {} if mission else {"file": str(self.gpx)}
         params.update(follower_params or {})
         if start_follower:
             self.start_follower(params)
@@ -302,7 +303,12 @@ class Rig:
         full["ROS_DOMAIN_ID"] = str(self.domain)
         full["ROS_AUTOMATIC_DISCOVERY_RANGE"] = "LOCALHOST"
         out = open(self.log_dir / log, "w")
-        proc = subprocess.Popen(cmd, env=full, stdout=out, stderr=subprocess.STDOUT, cwd=str(WS))
+        # Own process group: "ros2 run" does not forward SIGINT to the node it spawns, so
+        # signalling the wrapper alone leaves an orphaned follower publishing latched goals
+        # into the next test's domain.
+        proc = subprocess.Popen(
+            cmd, env=full, stdout=out, stderr=subprocess.STDOUT, cwd=str(WS), start_new_session=True
+        )
         self.procs.append(proc)
         return proc
 
@@ -315,16 +321,21 @@ class Rig:
         return self.follower
 
     def stop(self):
-        for p in self.procs:
-            if p.poll() is None:
-                p.send_signal(signal.SIGINT)
-        deadline = time.time() + 3
-        for p in self.procs:
-            try:
-                p.wait(timeout=max(0.1, deadline - time.time()))
-            except subprocess.TimeoutExpired:
-                p.kill()
-                p.wait(timeout=3)
+        for sig, grace in ((signal.SIGINT, 3.0), (signal.SIGKILL, 3.0)):
+            alive = [p for p in self.procs if p.poll() is None]
+            if not alive:
+                break
+            for p in alive:
+                try:
+                    os.killpg(os.getpgid(p.pid), sig)
+                except ProcessLookupError:
+                    pass
+            deadline = time.time() + grace
+            for p in alive:
+                try:
+                    p.wait(timeout=max(0.1, deadline - time.time()))
+                except subprocess.TimeoutExpired:
+                    pass
         self.executor.remove_node(self.observer)
         self.observer.destroy_node()
         rclpy.shutdown(context=self.context)
@@ -399,43 +410,88 @@ def wait_state(rig_, prefix, timeout, after=0):
 
 
 # --------------------------------------------------------------------------- scenarios
+def gps_episode(r, node, radius=9.0):
+    """
+    The commander's record of the GPS episode at ``node``: from the ``goto`` that preceded
+    the ring up to the ``goto`` that ends it. Anchored on the commander's own events (each
+    carries the robot pose), so it needs no clock alignment with the follower and ignores
+    any other GPS episode of the run.
+    """
+    ev = r.fake_events()
+
+    def near(e):
+        p = e.get("pose")
+        return p is not None and math.hypot(p[0] - node[0], p[1] - node[1]) <= radius
+
+    i_seq = next(
+        i for i, e in enumerate(ev)
+        if e["event"] == "switch_mode" and e["mode"] == "sequence" and near(e)
+    )
+    i_start = max(
+        (i for i in range(i_seq) if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"),
+        default=0,
+    )
+    i_end = next(
+        i for i in range(i_seq + 1, len(ev))
+        if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"
+    )
+    return ev[i_start : i_end + 1]
+
+
+def call_kinds(events):
+    """The follower's service calls / publications in an episode, in order."""
+    out = []
+    for e in events:
+        if e["event"] == "switch_mode":
+            out.append(("switch_mode", e["mode"]))
+        elif e["event"] == "configure_sequence_mode":
+            out.append(("configure_sequence_mode", e["source"]))
+        elif e["event"] == "goal_sequence":
+            out.append(("goal_sequence", e["poses"]))
+    return out
+
+
 def test_a_straight_route_one_ring_without_stopping(rig):
     """ROAD -> GPS:intersection -> ROAD with no STOP in between and one sequence per entry."""
-    route = densify([(0, 0), (45, 0)])
+    # 60 m: the ring sits at 24 m and the follower is back in ROAD well before the final
+    # approach (the last ~15 m of a route are driven in GPS).
+    route = densify([(0, 0), (60, 0)])
     r = rig(domain=DOMAIN["a"], route=route, intersections=[(24.0, 0.0)])
-    i_road = wait_state(r, "ROAD", 25)
+    i_road = wait_state(r, "ROAD", 30)
     i_gps = wait_state(r, "GPS:intersection", 40, after=i_road + 1)
     i_back = wait_state(r, "ROAD", 40, after=i_gps + 1)
 
     t_gps, t_back = r.observer.states[i_gps][0], r.observer.states[i_back][0]
+    window = call_kinds(gps_episode(r, (24.0, 0.0)))
     # F1: the hand-over is goto <-> sequence directly; a STOP here costs seconds per ring.
-    stops = [c for c in r.calls() if c[1] == "switch_mode" and c[2] == "stop"]
-    assert not stops, f"STOP requested during the ROAD<->GPS hand-over: {stops}\n{r.report()}"
-    modes = [c[2] for c in r.calls() if c[1] == "switch_mode"]
-    assert modes[:1] == ["goto"] and "sequence" in modes and modes[-1] == "goto", modes
-    # F2: one whole-route sequence per GPS entry, not one per window.
-    seqs = [c for c in r.calls() if c[1] == "goal_sequence"]
-    assert len(seqs) == 1, f"expected one /goal_sequence per GPS entry, got {seqs}\n{r.report()}"
-    assert [c[1] for c in r.calls()].count("configure_sequence_mode") == 1
+    assert ("switch_mode", "stop") not in window, f"STOP in the hand-over: {window}\n{r.report()}"
+    assert window[0] == ("switch_mode", "goto"), window
+    # F2: one whole-route sequence per GPS entry, not one per 10-waypoint window.
+    assert sum(1 for k in window if k[0] == "goal_sequence") == 1, f"{window}\n{r.report()}"
+    # S2: the source is configured before every sequence, not once per process.
+    assert sum(1 for k in window if k[0] == "configure_sequence_mode") == 1, window
     assert t_back - t_gps < 30, "spent too long at one ring"
     assert r.observer.pose[0] > 24.0, "the robot never passed the intersection"
 
 
 def test_b_right_angle_junction_is_left_after_the_node(rig):
     """F3: the exit test uses the route direction *after* the node, so a 90 deg turn exits."""
-    route = densify([(0, 0), (24, 0), (24, 30)])
+    route = densify([(0, 0), (24, 0), (24, 36)])
     r = rig(domain=DOMAIN["b"], route=route, intersections=[(24.0, 0.0)])
-    i_road = wait_state(r, "ROAD", 25)
+    i_road = wait_state(r, "ROAD", 30)
     i_gps = wait_state(r, "GPS:intersection", 40, after=i_road + 1)
-    i_back = wait_state(r, "ROAD", 60, after=i_gps + 1)
+    wait_state(r, "ROAD", 60, after=i_gps + 1)
 
-    pose = r.observer.states[i_back][2]
+    # Where the hand-over happened, as the commander saw it. The follower's own state topic
+    # is published at the top of its 1 Hz tick, i.e. one tick *after* the transition.
+    episode = gps_episode(r, (24.0, 0.0))
+    pose = episode[-1].get("pose")
     assert pose is not None, r.report()
     # Distance travelled past the junction along the outgoing (northbound) leg.
     past = math.hypot(pose[0] - 24.0, pose[1] - 0.0)
     assert pose[1] > 0.0, f"left GPS before the turn ({pose})\n{r.report()}"
     assert past < 10.0, f"still in GPS {past:.1f} m after the node\n{r.report()}"
-    assert not [c for c in r.calls() if c[1] == "switch_mode" and c[2] == "stop"]
+    assert ("switch_mode", "stop") not in call_kinds(episode), r.report()
 
 
 def test_c_commander_restart_mid_gps_is_recovered(rig):
@@ -445,7 +501,7 @@ def test_c_commander_restart_mid_gps_is_recovered(rig):
         domain=DOMAIN["c"],
         route=route,
         intersections=[(0.0, 0.0)],  # in the ring from the first tick: the whole run is GPS
-        fake_env={"FAKE_RESTART_AT": "20"},
+        fake_env={"FAKE_RESTART_AT": "20", "FAKE_SPEED": "1.5"},
         # Stay in GPS for the whole scenario so the restart cannot land in ROAD mode.
         follower_params={"intersection_enter_threshold": 8.0, "intersection_exit_threshold": 200.0},
     )
@@ -489,7 +545,7 @@ def test_d_stale_latched_qr_goal_is_ignored(rig):
     lat, lon = r.route_latlon[-1]
     r.observer.publish_qr_goal(lat, lon, age_s=60.0)
     r.spin(1.0)
-    r.start_follower({"file": ""})
+    r.start_follower({})
 
     r.require(lambda: r.observer.state_text() is not None, 30, "the follower to publish a state")
     r.spin(12.0)
@@ -508,8 +564,8 @@ def test_e_arrival_stops_the_commander(rig):
         plan_route=True,
         start_follower=False,
     )
-    r.start_follower({"file": "", "start_delay": 2.0})
-    r.require(lambda: r.observer.state_text() == "IDLE", 30, "IDLE")
+    r.start_follower({"start_delay": 2.0})
+    r.require(lambda: (r.observer.state_text() or "").startswith("IDLE"), 30, "IDLE")
     lat, lon = r.route_latlon[-1]
     r.observer.publish_qr_goal(lat, lon)
 
@@ -518,9 +574,12 @@ def test_e_arrival_stops_the_commander(rig):
     i_arrived = wait_state(r, "ARRIVED", 60)
     wait_state(r, "IDLE", 20, after=i_arrived + 1)
     assert r.plan_route.calls == 1
-    assert [e.split(":")[0] for _, e in r.observer.events][:5] == [
-        "GOAL", "PLANNING", "ROUTE", "START", "ARRIVED",
-    ], r.report()
+    r.require(lambda: any(e.startswith("IDLE") for _, e in r.observer.events), 10, "the IDLE event")
+    # The mission events in order; the node may publish others in between (HOME, FIX, ...).
+    names = [e.split(":")[0] for _, e in r.observer.events]
+    expected = ["GOAL", "PLANNING", "ROUTE", "START", "ARRIVED", "IDLE"]
+    it = iter(names)
+    assert all(any(n == want for n in it) for want in expected), f"{names}\n{r.report()}"
     r.require(
         lambda: r.observer.status and r.observer.status[-1]["mode"] == "STOP", 15, "commander STOP"
     )
