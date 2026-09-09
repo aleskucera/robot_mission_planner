@@ -64,6 +64,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 from robot_mission_planner.road_goal import (
     is_arrived,
     is_behind,
+    nearest_index,
+    passed_along,
+    route_offset_limit,
     select_carrot_goal,
     select_path_goal,
     smooth,
@@ -181,6 +184,11 @@ class RoadFollower(Node):
         # Road-goal sanity: reject goals farther than this from the planned route (0 = off)
         # or behind the robot, so a bad segmentation cannot pull us off the mission.
         self.declare_parameter("road_goal_max_route_offset", 5.0)
+        # The robot itself drives up to ~5 m off the OSM centreline under trees, so the
+        # limit is relative: a goal may be margin farther off the route than the robot is,
+        # never more than the hard limit (0 = no hard limit).
+        self.declare_parameter("road_goal_route_offset_margin", 2.0)
+        self.declare_parameter("road_goal_max_route_offset_hard", 10.0)
         self.declare_parameter("road_goal_reject_behind", True)
         # Where the ROAD goal comes from: "carrot" = one road-centre point per lidar frame
         # (convex-hull centre from build_point_cloud), "path" = the fitted/extrapolated
@@ -200,7 +208,17 @@ class RoadFollower(Node):
         self.declare_parameter("road_path_timeout", 5.0)  # s without a road path -> GPS (0 = off)
         self.declare_parameter("stuck_fallback_to_gps", True)  # commander STUCK in ROAD -> GPS
         self.declare_parameter("service_timeout", 3.0)  # s: commander service call watchdog
-        self.declare_parameter("gps_sequence_window", 10)  # waypoints per sequence (0 = all)
+        self.declare_parameter("gps_sequence_window", 0)  # waypoints per sequence (0 = all)
+        # ROAD <-> GPS hand-over (commander backend). The commander's own mode transition
+        # cancels the old goal, so the new goal is sent directly (goto <-> sequence) with no
+        # STOP in between; stop_between_modes restores the old STOP + delay behaviour and
+        # transition_delay adds a pause before the new goal is sent (s).
+        self.declare_parameter("stop_between_modes", False)
+        self.declare_parameter("transition_delay", 0.0)
+        # A gap this long (s) on commander_state_topic means the commander was restarted:
+        # its sequence source is back at the launch default and the goal is gone, so the
+        # sequence is re-configured and the current goal re-sent.
+        self.declare_parameter("commander_restart_gap", 5.0)
 
         # --- Mission (Robotour): QR goal -> route_planner -> follow -> arrive -> idle ---
         # With no `file`, the follower idles until a goal arrives on qr_goal_topic, asks
@@ -218,6 +236,10 @@ class RoadFollower(Node):
         self.declare_parameter("arrival_index_window", 3)  # waypoints from the end that count
         self.declare_parameter("arrived_hold", 0.0)  # s to stay ARRIVED before IDLE (signal later)
         self.declare_parameter("event_topic", "~/event")  # latched String mission events
+        # qr_goal_topic is latched: after a restart the follower would receive the previous
+        # goal again and drive off unprompted. Goals stamped before the node started (minus
+        # this tolerance, s) are ignored; 0 = accept everything.
+        self.declare_parameter("stale_goal_tolerance", 2.0)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
         self.nav_backend = gp("nav_backend")
@@ -244,6 +266,8 @@ class RoadFollower(Node):
         self.gps_exit_min_waypoints = gp("gps_exit_min_waypoints")
         self.require_wp_to_exit = gp("require_waypoint_reached_to_exit_gps")
         self.road_goal_max_route_offset = gp("road_goal_max_route_offset")
+        self.road_goal_route_offset_margin = float(gp("road_goal_route_offset_margin"))
+        self.road_goal_max_route_offset_hard = float(gp("road_goal_max_route_offset_hard"))
         self.road_goal_reject_behind = gp("road_goal_reject_behind")
         self.road_goal_source = gp("road_goal_source")
         if self.road_goal_source not in ("carrot", "path"):
@@ -260,6 +284,9 @@ class RoadFollower(Node):
         self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
         self.service_timeout = gp("service_timeout")
         self.gps_sequence_window = gp("gps_sequence_window")
+        self.stop_between_modes = bool(gp("stop_between_modes"))
+        self.transition_delay = float(gp("transition_delay"))
+        self.commander_restart_gap = float(gp("commander_restart_gap"))
         self.plan_spacing = float(gp("plan_spacing"))
         self.plan_retries = int(gp("plan_retries"))
         self.plan_retry_delay = float(gp("plan_retry_delay"))
@@ -268,6 +295,7 @@ class RoadFollower(Node):
         self.goal_reached_radius = float(gp("goal_reached_radius"))
         self.arrival_index_window = int(gp("arrival_index_window"))
         self.arrived_hold = float(gp("arrived_hold"))
+        self.stale_goal_tolerance = float(gp("stale_goal_tolerance"))
 
         # --- TF ---
         self.tf_buffer = Buffer()
@@ -352,14 +380,16 @@ class RoadFollower(Node):
         self._last_road_goal = None  # (x, y) in map_frame of the active ROAD goal
         self._pending_goal_timer = None
         self._gps_start_index = 0
-        self._sequence_configured = False
         self._requested_mode = None  # last mode asked of the commander (state topic lags)
+        self._commander_state_time = None  # node clock seconds of the last state message
+        self._commander_restarted = False  # set by the state-gap detector, consumed in the loop
         self._requested_mode_time = 0.0
         self._mode_settle_time = 2.0  # s after a switch before the state topic is trusted
         self._waypoints_synced = False  # first sync searches the whole list
         self._gps_reason = None  # why GPS mode was entered
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
-        self._gps_route_dir = None  # unit route direction at the active intersection
+        self._gps_route_dir = None  # unit route direction leaving the active intersection
+        self._gps_node_index = None  # route waypoint nearest to the active intersection
         self._service_watchdogs = []
         self._mission_goal = None  # (lat, lon) of the QR goal being planned / followed
         self._plan_attempt = 0
@@ -546,7 +576,6 @@ class RoadFollower(Node):
             # sequence would send the robot back to the start after ARRIVED was missed.
             self.get_logger().info("Mission route: loop disabled")
             self.loop = False
-            self._sequence_configured = False  # re-send configure_sequence_mode with loop=false
         self.current_waypoint_index = self.start_index if source.startswith("file") else 0
         self._waypoints_synced = False
         self._gps_entry_index = 0
@@ -753,6 +782,19 @@ class RoadFollower(Node):
     def _commander_state_callback(self, msg):
         if msg.data != self.commander_mode:
             self.get_logger().info(f"Commander state: {msg.data}")
+        now = self._now()
+        if (
+            self.commander_restart_gap > 0
+            and self._commander_state_time is not None
+            and (now - self._commander_state_time) > self.commander_restart_gap
+        ):
+            self.get_logger().warning(
+                f"Commander state silent for {now - self._commander_state_time:.0f} s: "
+                "assuming a restart, re-sending the current goal."
+            )
+            self._commander_restarted = True
+            self._requested_mode = None
+        self._commander_state_time = now
         self.commander_mode = msg.data
         # The commander leaves our mode on its own (sequence finished -> STOP, operator
         # intervention, STUCK). Forget the request so the next switch is actually sent.
@@ -861,7 +903,14 @@ class RoadFollower(Node):
             self._sync_waypoint_index_to_closest(rob_xy)
         if self.nav_backend == "commander" and self.state == self.STATE_ROAD:
             self._check_road_goal_reached(rob_xy)
-        if self.nav_backend == "commander" and self._commander_left_us():
+        if self.nav_backend == "commander" and self._commander_restarted:
+            self._commander_restarted = False
+            self._goal_active = False
+            if self.state == self.STATE_GPS:
+                self._send_gps_goal()
+            else:
+                self._send_road_goal()
+        elif self.nav_backend == "commander" and self._commander_left_us():
             if self.state == self.STATE_GPS:
                 # The sequence window (gps_sequence_window) was consumed: send the next one.
                 self.get_logger().info("Commander finished the sequence window; sending the next one.")
@@ -959,8 +1008,26 @@ class RoadFollower(Node):
             self._gps_reason = GPS_REASON_INTERSECTION
             self._active_intersection = closest_xy
             self._gps_entry_index = self.current_waypoint_index
-            self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
+            self._target_intersection(closest_xy)
             return
+        if (
+            closest < self.enter_threshold
+            and self._gps_reason == GPS_REASON_INTERSECTION
+            and self._active_intersection is not None
+            and closest_xy is not None
+            and math.hypot(closest_xy[0] - self._active_intersection[0], closest_xy[1] - self._active_intersection[1]) > 0.5
+        ):
+            # The next intersection is closer than the exit ring of the active one (rings
+            # 16 m apart on average, 31 pairs under 6 m in Stromovka): adopt it if it lies
+            # farther along the route, instead of leaving and re-entering GPS mode.
+            next_index = nearest_index(self.waypoints_map, closest_xy) if self.waypoints_map else None
+            if self._gps_node_index is None or next_index is None or next_index >= self._gps_node_index:
+                self.get_logger().info(
+                    f"Next intersection already within {closest:.1f} m: staying in GPS mode through it."
+                )
+                self._active_intersection = closest_xy
+                self._target_intersection(closest_xy)
+                return
 
         advanced = self.current_waypoint_index - self._gps_entry_index
         if advanced < self.gps_exit_min_waypoints:
@@ -969,9 +1036,9 @@ class RoadFollower(Node):
         if self._gps_reason == GPS_REASON_INTERSECTION:
             if closest <= self.exit_threshold:
                 return
-            if self.gps_exit_require_passed and self._active_intersection is not None and self._gps_route_dir is not None:
-                rel = np.array([rob_xy[0] - self._active_intersection[0], rob_xy[1] - self._active_intersection[1]])
-                if float(rel @ self._gps_route_dir) <= 0.0:
+            if self.gps_exit_require_passed and self._active_intersection is not None:
+                index_passed = self._gps_node_index is not None and self.current_waypoint_index > self._gps_node_index
+                if not index_passed and not passed_along(rob_xy, self._active_intersection, self._gps_route_dir):
                     return  # still before the intersection along the route
             if self.require_wp_to_exit and self.waypoints:
                 if self._waypoint_distance(self.current_waypoint_index, rob_xy) >= self.gps_threshold:
@@ -994,9 +1061,22 @@ class RoadFollower(Node):
         self._gps_reason = reason
         self._active_intersection = intersection_xy
         self._gps_entry_index = self.current_waypoint_index
-        self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
-        self._cancel_current_goal()
-        self._schedule_goal(delay_sec=1.0, mode="GPS")
+        self._target_intersection(intersection_xy)
+        self._hand_over("GPS")
+
+    def _target_intersection(self, intersection_xy):
+        """
+        Remember which route waypoint the intersection sits at and the route direction
+        *leaving* it. The exit test is "passed the node along the outgoing segment"; the
+        incoming direction would fail at a right-angle turn (dot product ~0) and reverse
+        at a sharper one, keeping the follower in GPS mode for the rest of the leg.
+        """
+        if intersection_xy is not None and self.waypoints_map:
+            self._gps_node_index = nearest_index(self.waypoints_map, intersection_xy)
+            self._gps_route_dir = self._route_direction_at(self._gps_node_index)
+        else:
+            self._gps_node_index = None
+            self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
 
     def _enter_road(self, why):
         self.get_logger().info(f"{why}. Switching back to ROAD mode.")
@@ -1004,9 +1084,32 @@ class RoadFollower(Node):
         self._gps_reason = None
         self._active_intersection = None
         self._gps_route_dir = None
+        self._gps_node_index = None
         self._last_road_goal = None
-        self._cancel_current_goal()
-        self._schedule_goal(delay_sec=1.0, mode="ROAD")
+        self._hand_over("ROAD")
+
+    def _hand_over(self, mode):
+        """
+        Give the backend the goal of the new state. Commander backend: no STOP in between
+        (its transitionTo() cancels the old goal and re-initialises the sequence itself) and
+        no pause unless transition_delay says so, because every stop costs seconds at each
+        of the many intersections. Nav2, or stop_between_modes: cancel first, then wait 1 s.
+        """
+        if self.nav_backend != "commander" or self.stop_between_modes:
+            self._cancel_current_goal()
+            self._schedule_goal(delay_sec=max(1.0, self.transition_delay), mode=mode)
+            return
+        self._goal_active = False
+        if self.transition_delay > 0.0:
+            self._schedule_goal(delay_sec=self.transition_delay, mode=mode)
+            return
+        if self._pending_goal_timer:
+            self._pending_goal_timer.cancel()
+            self._pending_goal_timer = None
+        if mode == "GPS":
+            self._send_gps_goal()
+        else:
+            self._send_road_goal()
 
     # ------------------------------------------------------------------ mission
     def _cancel_plan_timer(self):
@@ -1026,6 +1129,14 @@ class RoadFollower(Node):
 
     def _qr_goal_callback(self, msg):
         lat, lon = msg.position.latitude, msg.position.longitude
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.stale_goal_tolerance > 0 and stamp > 0 and stamp < self._start_time - self.stale_goal_tolerance:
+            self.get_logger().warning(
+                f"QR goal {lat:.7f}, {lon:.7f} ignored: published {self._start_time - stamp:.0f} s "
+                "before this node started (latched goal of a previous run)",
+                throttle_duration_sec=30.0,
+            )
+            return
         if self.state != self.STATE_IDLE:
             self.get_logger().warning(
                 f"QR goal {lat:.7f}, {lon:.7f} ignored: follower is {self._state_text()}",
@@ -1186,18 +1297,23 @@ class RoadFollower(Node):
 
     def _road_goal_valid(self, goal_xy, quiet: bool = False) -> bool:
         """Sanity-check a road goal against the planned route and the robot heading."""
+        pose = self._robot_pose() if (self.road_goal_max_route_offset > 0 or self.road_goal_reject_behind) else None
         if self.road_goal_max_route_offset > 0 and self._route_a.size:
             off = distance_to_polyline(goal_xy, self._route_a, self._route_b)
-            if off > self.road_goal_max_route_offset:
+            off_robot = distance_to_polyline(pose[:2], self._route_a, self._route_b) if pose is not None else None
+            limit = route_offset_limit(
+                off_robot, self.road_goal_max_route_offset,
+                self.road_goal_route_offset_margin, self.road_goal_max_route_offset_hard,
+            )
+            if off > limit:
                 if not quiet:
                     self.get_logger().warning(
                         f"Road goal rejected: {off:.1f} m off the planned route "
-                        f"(> {self.road_goal_max_route_offset} m)",
+                        f"(> {limit:.1f} m; robot itself {off_robot if off_robot is None else round(off_robot, 1)} m off)",
                         throttle_duration_sec=2.0,
                     )
                 return False
         if self.road_goal_reject_behind:
-            pose = self._robot_pose()
             if pose is not None and is_behind(goal_xy, pose[:2], pose[2]):
                 if not quiet:
                     self.get_logger().warning("Road goal rejected: behind the robot", throttle_duration_sec=2.0)
@@ -1230,8 +1346,8 @@ class RoadFollower(Node):
         self._last_road_goal = goal_xy
 
         if self.nav_backend == "commander":
-            self._commander_switch_mode("goto")
             self._pub_goal_waypoint.publish(pose_stamped)
+            self._commander_switch_mode("goto")
             return
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose_stamped
@@ -1297,10 +1413,12 @@ class RoadFollower(Node):
         self._commander_switch_mode("sequence")
 
     def _commander_configure_sequence(self, then):
-        """Make the commander take its sequence from the topic, then call ``then``."""
-        if self._sequence_configured:
-            then()
-            return
+        """
+        Make the commander take its sequence from the topic, then call ``then``.
+
+        Sent before every sequence, not once: a restarted commander is back at its launch
+        default (2026-09-08 it loaded a GPX file from disk mid-mission), and the call is cheap.
+        """
         cli = self._cli_configure_seq
         if not cli.service_is_ready():
             self.get_logger().warning(
@@ -1324,7 +1442,6 @@ class RoadFollower(Node):
             try:
                 res = fut.result()
                 self.get_logger().info(f"configure_sequence_mode: {res.success} {res.message}")
-                self._sequence_configured = bool(res.success)
             except Exception as e:
                 self.get_logger().error(f"configure_sequence_mode failed: {e}")
             run_then()

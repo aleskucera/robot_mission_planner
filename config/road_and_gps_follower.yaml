@@ -52,7 +52,18 @@
     require_waypoint_reached_to_exit_gps: false
     gps_exit_require_passed: true       # leave GPS only after passing the intersection along the route
     gps_exit_min_waypoints: 0           # waypoints to advance before leaving GPS mode
-    gps_sequence_window: 10             # waypoints sent per sequence (0 = all remaining)
+    # Waypoints sent per sequence. 0 = the whole remaining route: mission routes never
+    # loop and every window end is a STOP + re-send (a stop every 30 m with 10).
+    gps_sequence_window: 0
+    # ROAD <-> GPS hand-over: the commander is switched goto <-> sequence directly (its own
+    # transition cancels the old goal), with no STOP and no pause. stop_between_modes: true
+    # restores the old STOP + 1 s behaviour; transition_delay adds a pause (s) before the
+    # new goal is sent.
+    stop_between_modes: false
+    transition_delay: 0.0
+    # A gap this long (s) on commander_state_topic = the commander was restarted: the
+    # sequence source is re-configured and the current goal re-sent (0 = off).
+    commander_restart_gap: 5.0
 
     # Road goal source. carrot: the convex-hull centre of the road points in the current
     # lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose
@@ -78,9 +89,17 @@
     goal_reached_radius: 5.0            # m to the last waypoint = arrived
     arrival_index_window: 3             # waypoints from the end that count
     arrived_hold: 0.0                   # s in ARRIVED before IDLE
+    # /qr_goal/goal is latched: a goal stamped earlier than this (s) before the follower
+    # started is the previous run's goal and is ignored (0 = accept everything).
+    stale_goal_tolerance: 2.0
 
     # Road-goal sanity and failure handling
     road_goal_max_route_offset: 5.0     # m: reject road goals farther from the planned route (0 = off)
+    # The robot itself sits up to ~5 m off the OSM line under trees (2026-09-08: 90 % within
+    # 4.4 m), so the limit is relative: goal offset <= max(limit, robot offset + margin),
+    # never above the hard limit (0 = no hard limit).
+    road_goal_route_offset_margin: 2.0
+    road_goal_max_route_offset_hard: 10.0
     road_goal_reject_behind: true
     road_path_timeout: 5.0              # s without a road path -> GPS fallback (0 = off)
     stuck_fallback_to_gps: true         # commander STUCK while road following -> GPS fallback
