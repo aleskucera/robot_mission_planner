@@ -65,6 +65,10 @@
     # A gap this long (s) on commander_state_topic = the commander was restarted: the
     # sequence source is re-configured and the current goal re-sent (0 = off).
     commander_restart_gap: 5.0
+    # The waypoint frame (ECEF/UTM) -> map_frame transform is looked up again every this many
+    # seconds: a Fixposition restart re-defines FP_ENU0 and the waypoints have to be placed
+    # again (they move by more than 0.1 m). 0 = resolve it once at startup only.
+    waypoint_tf_recheck_period: 10.0
 
     # Road goal source. carrot: the convex-hull centre of the road points in the current
     # lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose

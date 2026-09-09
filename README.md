@@ -78,6 +78,10 @@ Backends (`nav_backend`):
 | `commander` (Helhest NUC, default) | `PoseStamped` on `goal_waypoint_topic`, `switch_mode("goto")` | latched `PoseArray` in `earth_frame` (ECEF) on `goal_sequence_topic`, `configure_sequence_mode(source=topic)`, `switch_mode("sequence")` |
 | `nav2` | `NavigateToPose` | `FollowWaypoints` (`FollowGPSWaypoints` when `use_utm:=false`) |
 
+The waypoint frame → `map_frame` transform is looked up again every
+`waypoint_tf_recheck_period` (10 s): a Fixposition restart re-defines `FP_ENU0`, and the
+waypoints, the route polyline and the cached intersections are then placed again.
+
 Frames are parameters: `map_frame` (fixed frame all distances are measured in, `FP_ENU0`),
 `robot_frame` (`base_link`), `earth_frame` (`FP_ECEF`, commander waypoints) and `utm_frame`
 (nav2 + `use_utm`). Intersections and road paths may arrive in any TF-connected frame.

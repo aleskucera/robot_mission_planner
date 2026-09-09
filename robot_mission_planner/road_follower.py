@@ -90,6 +90,12 @@ GPS_REASON_FINAL = "final"  # last metres to the goal: GPS all the way in, never
 # goals through the route-offset filter, so the operator has to see which one it is.
 FIX_NAMES = {2: "rtk", 1: "float", 0: "gps", -1: "nofix"}
 
+# How much the waypoint source frame -> map_frame transform has to move before the waypoints
+# are re-placed (F9): 0.1 m of translation, or a rotation whose matrix moves by this much in
+# the Frobenius norm (~0.04 deg). Below that it is TF noise, not a new ENU origin.
+TF_SHIFT_EPS = 0.1
+TF_ROTATION_EPS = 1e-3
+
 
 def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
     lat, lon = math.radians(lat_deg), math.radians(lon_deg)
@@ -233,6 +239,10 @@ class RoadFollower(Node):
         # its sequence source is back at the launch default and the goal is gone, so the
         # sequence is re-configured and the current goal re-sent.
         self.declare_parameter("commander_restart_gap", 5.0)
+        # The waypoint frame -> map_frame transform is looked up again every this many
+        # seconds (F9): a Fixposition restart moves FP_ENU0 and every waypoint placed in it
+        # would be wrong until the follower is restarted. 0 = resolve once, as before.
+        self.declare_parameter("waypoint_tf_recheck_period", 10.0)
 
         # --- Mission (Robotour): QR goal -> route_planner -> follow -> arrive -> idle ---
         # With no `file`, the follower idles until a goal arrives on qr_goal_topic, asks
@@ -311,6 +321,7 @@ class RoadFollower(Node):
         self.stop_between_modes = bool(gp("stop_between_modes"))
         self.transition_delay = float(gp("transition_delay"))
         self.commander_restart_gap = float(gp("commander_restart_gap"))
+        self.waypoint_tf_recheck_period = float(gp("waypoint_tf_recheck_period"))
         self.plan_spacing = float(gp("plan_spacing"))
         self.plan_retries = int(gp("plan_retries"))
         self.plan_retry_delay = float(gp("plan_retry_delay"))
@@ -512,18 +523,43 @@ class RoadFollower(Node):
         return numpify(tf_msg.transform)
 
     def _resolve_waypoint_transform(self):
-        """Resolve waypoint source frame -> map_frame once, then convert the waypoints."""
+        """
+        Resolve waypoint source frame -> map_frame and place the waypoints in map_frame.
+
+        Kept running at ``waypoint_tf_recheck_period`` after the first success instead of
+        cancelling the timer: a Fixposition restart re-defines FP_ENU0 (its origin is the
+        first fix of the run), and every waypoint, the route polyline and the cached
+        intersections would stay where the old origin put them.
+        """
         m = self._lookup_matrix(self.map_frame, self.waypoint_src_frame, timeout=1.0)
         if m is None:
             return
+        first = not self._tf_ready
+        if not first:
+            shift = float(np.linalg.norm(m[:3, 3] - self.src_to_map[:3, 3]))
+            rotation = float(np.linalg.norm(m[:3, :3] - self.src_to_map[:3, :3]))
+            if shift <= TF_SHIFT_EPS and rotation <= TF_ROTATION_EPS:
+                return
+            self.get_logger().warning(
+                f"{self.waypoint_src_frame} -> {self.map_frame} moved by {shift:.2f} m "
+                f"(rotation {rotation:.4f}): re-placing {self.number_waypoints} waypoints. "
+                f"{self.map_frame} was most likely redefined by a Fixposition restart."
+            )
         self.src_to_map = m
         self._tf_ready = True
         self._process_waypoints()
-        self._utm_timer.cancel()
-        self.get_logger().info(
-            f"Got {self.waypoint_src_frame} -> {self.map_frame} transform; "
-            f"{self.number_waypoints} waypoints placed in {self.map_frame}"
-        )
+        self._intersections_map = None  # cached in the old map_frame
+        if first:
+            self.get_logger().info(
+                f"Got {self.waypoint_src_frame} -> {self.map_frame} transform; "
+                f"{self.number_waypoints} waypoints placed in {self.map_frame}"
+            )
+            # Switch from the 1 s acquisition timer to the (slower) re-check.
+            self._utm_timer.cancel()
+            if self.waypoint_tf_recheck_period > 0:
+                self._utm_timer = self.create_timer(
+                    self.waypoint_tf_recheck_period, self._resolve_waypoint_transform
+                )
 
     def _robot_pose(self):
         """Robot (x, y, yaw) in map_frame, or None."""
