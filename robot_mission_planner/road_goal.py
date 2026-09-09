@@ -160,6 +160,17 @@ def remaining_route_length(
     return total
 
 
+def latlon_distance(a: Point, b: Point) -> float:
+    """
+    Approximate distance (m) between two ``(lat, lon)`` pairs (equirectangular, the mean
+    latitude for the longitude scale). Well under a percent of error over a few kilometres,
+    which is all the follower asks of it ("is this the goal we are already driving to?").
+    """
+    lat_m = (a[0] - b[0]) * 111320.0
+    lon_m = (a[1] - b[1]) * 111320.0 * math.cos(math.radians((a[0] + b[0]) / 2.0))
+    return math.hypot(lat_m, lon_m)
+
+
 def nearest_index(points_xy: list[Point | None], xy: Point) -> int:
     """Index of the point closest to ``xy`` (``None`` entries skipped; 0 if none)."""
     best, best_d = 0, float("inf")

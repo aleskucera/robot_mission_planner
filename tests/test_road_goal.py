@@ -149,3 +149,19 @@ def test_remaining_route_length_skips_missing_and_clamps_the_index():
 def test_remaining_route_length_without_a_usable_route_is_infinite():
     assert remaining_route_length((0.0, 0.0), [], 0) == float("inf")
     assert remaining_route_length((0.0, 0.0), [None, None], 0) == float("inf")
+
+
+# ---------------------------------------------------------------- QR goal distance
+from robot_mission_planner.road_goal import latlon_distance  # noqa: E402
+
+
+def test_latlon_distance_metres():
+    assert latlon_distance((50.11, 14.41), (50.11, 14.41)) == pytest.approx(0.0)
+    # 0.001 deg of latitude is ~111.3 m anywhere
+    assert latlon_distance((50.11, 14.41), (50.111, 14.41)) == pytest.approx(111.32, abs=0.5)
+    # the same step in longitude is shorter by cos(lat) at 50 deg
+    assert latlon_distance((50.11, 14.41), (50.11, 14.411)) == pytest.approx(
+        111.32 * math.cos(math.radians(50.11)), abs=0.5
+    )
+    # the start code seen again: well inside the 2 m pending-goal threshold
+    assert latlon_distance((50.1103476, 14.4159857), (50.1103480, 14.4159860)) < 2.0

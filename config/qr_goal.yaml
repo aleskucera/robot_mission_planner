@@ -8,7 +8,9 @@
     image_transport: "compressed"   # compressed | raw
     process_rate: 4.0               # Hz: decode at most this often
     confirm_frames: 2               # consecutive frames before a goal
-    republish_after_s: 30.0         # same code again only after this
+    # Same code again only after this. Short, because road_follower buffers a goal seen
+    # while it is busy and the operator may need to re-show a code that was missed.
+    republish_after_s: 10.0
     goal_topic: "/qr_goal/goal"
     goal_frame_id: "wgs84"
     text_topic: "~/text"            # manual entry, see qr_goal_send

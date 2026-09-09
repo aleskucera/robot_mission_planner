@@ -65,6 +65,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from robot_mission_planner.road_goal import (
     is_arrived,
     is_behind,
+    latlon_distance,
     nearest_index,
     passed_along,
     remaining_route_length,
@@ -252,6 +253,11 @@ class RoadFollower(Node):
         # goal again and drive off unprompted. Goals stamped before the node started (minus
         # this tolerance, s) are ignored; 0 = accept everything.
         self.declare_parameter("stale_goal_tolerance", 2.0)
+        # A goal that arrives while the follower is busy is buffered and taken when the leg
+        # ends (qr_goal suppresses the same code for republish_after_s, so it would otherwise
+        # be lost). A goal this close (m) to the one being driven is the same code seen again
+        # and is dropped instead.
+        self.declare_parameter("pending_goal_min_distance", 2.0)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
         self.nav_backend = gp("nav_backend")
@@ -309,6 +315,7 @@ class RoadFollower(Node):
         self.arrived_hold = float(gp("arrived_hold"))
         self.final_approach_distance = float(gp("final_approach_distance"))
         self.stale_goal_tolerance = float(gp("stale_goal_tolerance"))
+        self.pending_goal_min_distance = float(gp("pending_goal_min_distance"))
 
         # --- TF ---
         self.tf_buffer = Buffer()
@@ -406,6 +413,7 @@ class RoadFollower(Node):
         self._gps_node_index = None  # route waypoint nearest to the active intersection
         self._service_watchdogs = []
         self._mission_goal = None  # (lat, lon) of the QR goal being planned / followed
+        self._pending_goal = None  # (lat, lon, stamp) seen while busy, taken on IDLE
         self._plan_attempt = 0
         self._plan_goal_handle = None
         self._plan_timer = None  # retry / start-delay / timeout timer
@@ -1178,11 +1186,17 @@ class RoadFollower(Node):
                 throttle_duration_sec=30.0,
             )
             return
+        self._take_goal(lat, lon, stamp)
+
+    def _take_goal(self, lat: float, lon: float, stamp: float):
+        """
+        Act on a goal that passed the stale check: plan it when IDLE, else buffer it (F6).
+        Called again from ``_enter_idle`` for the buffered one, so the stale check stays in
+        the subscription callback - a goal that was fresh when it arrived does not go stale
+        while the robot drives the leg before it.
+        """
         if self.state != self.STATE_IDLE:
-            self.get_logger().warning(
-                f"QR goal {lat:.7f}, {lon:.7f} ignored: follower is {self._state_text()}",
-                throttle_duration_sec=5.0,
-            )
+            self._buffer_goal(lat, lon, stamp)
             return
         if self._plan_client is None:
             self.get_logger().error("QR goal received but the PlanRoute action client is unavailable")
@@ -1197,6 +1211,25 @@ class RoadFollower(Node):
         self.state = self.STATE_PLANNING
         self._publish_state()
         self._request_route()
+
+    def _buffer_goal(self, lat: float, lon: float, stamp: float):
+        """Remember a goal that arrived while the follower was busy, unless it is the goal
+        of the current leg (the start code read again on the way, or at the goal itself)."""
+        if (
+            self._mission_goal is not None
+            and latlon_distance((lat, lon), self._mission_goal) < self.pending_goal_min_distance
+        ):
+            self.get_logger().info(
+                f"QR goal {lat:.7f}, {lon:.7f} ignored: it is the goal of the current leg",
+                throttle_duration_sec=30.0,
+            )
+            return
+        self._pending_goal = (lat, lon, stamp)
+        self.get_logger().warning(
+            f"QR goal {lat:.7f}, {lon:.7f} buffered: follower is {self._state_text()}; "
+            "it is taken as soon as this leg ends",
+            throttle_duration_sec=5.0,
+        )
 
     def _request_route(self):
         self._plan_attempt += 1
@@ -1324,6 +1357,7 @@ class RoadFollower(Node):
             except Exception as e:  # noqa: BLE001 - the abort must never fail on this
                 self.get_logger().warning(f"Could not cancel the PlanRoute goal: {e}")
             self._plan_goal_handle = None
+        self._pending_goal = None  # an abort must not start the buffered leg either
         self._event(f"ABORT:{left}")
         self._enter_idle("aborted by operator")
         response.success = True
@@ -1338,6 +1372,10 @@ class RoadFollower(Node):
         self._cancel_plan_timer()
         self._event("IDLE")
         self._publish_state()
+        pending, self._pending_goal = self._pending_goal, None
+        if pending is not None:
+            self.get_logger().info(f"Taking the buffered QR goal {pending[0]:.7f}, {pending[1]:.7f}")
+            self._take_goal(*pending)
 
     # ------------------------------------------------------------------ goal dispatch
     def _schedule_goal(self, delay_sec, mode):

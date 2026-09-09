@@ -22,8 +22,10 @@ Mission mode (no `gps_file`): the follower starts **IDLE** and waits for a QR go
 attempts, `plan_retry_delay` apart, back to IDLE on failure), logs the accepted goal (an
 audible signal will be added here), waits `start_delay` (5 s) and then follows the route
 with the ROAD/GPS logic below. Within `goal_reached_radius` (5 m) of the last waypoint it
-stops the commander, reports **ARRIVED** and returns to IDLE for the next goal; QR goals that
-arrive in any other state than IDLE are ignored. States are on `~/state`, mission events
+stops the commander, reports **ARRIVED** and returns to IDLE for the next goal. A QR goal
+that arrives in any other state is buffered and taken as soon as the leg ends, unless it is
+within `pending_goal_min_distance` (2 m) of the goal being driven — that is the same code
+read again. States are on `~/state`, mission events
 (`GOAL:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `ABORT:<state>`, `PLAN_FAILED:…`,
 `IDLE`) on `~/event`. `~/abort` (`std_srvs/Trigger`) gives up the current leg from any state
 — commander STOP, pending timers and a PlanRoute goal in flight cancelled, back to IDLE —
@@ -125,7 +127,7 @@ Robotour hands the goal over as a QR code with a geo URI payload (`geo:lat,lon`,
 `qr_goal` reads the robot camera, decodes QR codes with OpenCV, and publishes the position as a
 latched `geographic_msgs/GeoPointStamped` on `/qr_goal/goal`; `road_follower` picks it up when
 idle, asks `route_planner` for a route and follows it (see the mission states above). A payload must be decoded in `confirm_frames` consecutive
-processed frames and is published once (again only after `republish_after_s`).
+processed frames and is published once (again only after `republish_after_s`, 10 s).
 
 ```bash
 ros2 launch robot_mission_planner qr_goal.launch    # reads /odin1/image/compressed

@@ -100,6 +100,10 @@
     # /qr_goal/goal is latched: a goal stamped earlier than this (s) before the follower
     # started is the previous run's goal and is ignored (0 = accept everything).
     stale_goal_tolerance: 2.0
+    # A QR goal seen while the follower is busy is buffered and taken when the leg ends
+    # (qr_goal shows the same code only every republish_after_s). A goal closer than this (m)
+    # to the goal of the current leg is that same code seen again and is dropped.
+    pending_goal_min_distance: 2.0
 
     # Road-goal sanity and failure handling
     road_goal_max_route_offset: 5.0     # m: reject road goals farther from the planned route (0 = off)
