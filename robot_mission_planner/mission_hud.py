@@ -51,7 +51,8 @@ BLUE = "#64b5f6"
 CYAN = "#4dd0e1"
 WHITE = "#e8eaed"
 
-# road_follower states as they arrive on ~/state ("GPS:<reason>" carries a suffix).
+# road_follower states as they arrive on ~/state: "GPS:<reason>" carries a reason and every
+# state may carry the GNSS fix quality ("ROAD [rtk]"), so the key is cut at ":" and " ".
 STATE_COLORS = {
     "ROAD": GREEN,
     "GPS": AMBER,
@@ -213,7 +214,7 @@ class MissionHud(Node):
     # ------------------------------------------------------------------ panels
     def _mission_panel(self) -> OverlayText:
         state = self._follower or "?"
-        color = STATE_COLORS.get(state.split(":")[0], WHITE)
+        color = STATE_COLORS.get(state.split(":")[0].split(" ")[0], WHITE)
         lines = [self._row("FOLLOWER", state, color)]
 
         lines.append(self._row("route", self._route_progress()))

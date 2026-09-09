@@ -84,6 +84,12 @@ GPS_REASON_NO_ROAD = "no_road"
 GPS_REASON_STUCK = "stuck"
 GPS_REASON_FINAL = "final"  # last metres to the goal: GPS all the way in, never back to ROAD
 
+# sensor_msgs/NavSatStatus.status -> the suffix the follower appends to its state (F8).
+# Fixposition reports 2 for an RTK fixed solution, 1 for float, 0 for a plain GNSS fix and
+# -1 for none; under trees the float fix plus the OSM centreline offset is what pushes road
+# goals through the route-offset filter, so the operator has to see which one it is.
+FIX_NAMES = {2: "rtk", 1: "float", 0: "gps", -1: "nofix"}
+
 
 def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
     lat, lon = math.radians(lat_deg), math.radians(lon_deg)
@@ -419,6 +425,7 @@ class RoadFollower(Node):
         self._plan_timer = None  # retry / start-delay / timeout timer
         self._plan_started = 0.0
         self._arrived_time = 0.0
+        self._fix_status = None  # last NavSatStatus.status seen on gps_fix_topic
         # R1: the team-defined "continue" signal is the next QR code shown to the robot, so
         # the first goal accepted after an arrival is announced as CONTINUE as well.
         self._continue_after_arrival = False
@@ -844,9 +851,24 @@ class RoadFollower(Node):
 
     def _gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
+        self._update_fix_status(int(msg.status.status))
         if not self.path_send_url and (self.pose_ekf or not self.get_parameter("gps_filtered_topic").value):
             self.send_data_url("path")
             self.path_send_url = True
+
+    def _fix_name(self) -> str:
+        """Name of the current fix quality ("" until the first fix message)."""
+        if self._fix_status is None:
+            return ""
+        return FIX_NAMES.get(self._fix_status, f"fix{self._fix_status}")
+
+    def _update_fix_status(self, status: int):
+        """Remember the fix quality and announce every change (log + FIX event)."""
+        if status == self._fix_status:
+            return
+        self._fix_status = status
+        self.get_logger().info(f"GNSS fix: {self._fix_name()} (NavSatStatus {status})")
+        self._event(f"FIX:{self._fix_name()}")
 
     def _ekf_callback(self, msg):
         self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
@@ -881,12 +903,20 @@ class RoadFollower(Node):
     # ------------------------------------------------------------------ state machine
     def _state_text(self) -> str:
         if self.state == self.STATE_ROAD:
-            return "ROAD"
-        if self.state == self.STATE_GPS:
-            return f"GPS:{self._gps_reason}"
-        return {self.STATE_IDLE: "IDLE", self.STATE_PLANNING: "PLANNING", self.STATE_ARRIVED: "ARRIVED"}[
-            self.state
-        ]
+            text = "ROAD"
+        elif self.state == self.STATE_GPS:
+            text = f"GPS:{self._gps_reason}"
+        else:
+            text = {
+                self.STATE_IDLE: "IDLE",
+                self.STATE_PLANNING: "PLANNING",
+                self.STATE_ARRIVED: "ARRIVED",
+            }[self.state]
+        # F8: the fix quality rides along on the state string ("ROAD [rtk]"), so the HUD and
+        # every log line that names the state say what the position is worth. Readers split
+        # the state off at the first space.
+        fix = self._fix_name()
+        return f"{text} [{fix}]" if fix else text
 
     def _event(self, text: str):
         self.get_logger().info(f"EVENT {text}")

@@ -64,7 +64,9 @@ from the start.
   watched with `service_timeout`.
 
 The node publishes its own state as a latched `std_msgs/String` on `state_topic`
-(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck|final>`) and the intersection that
+(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck|final>`, followed by the
+GNSS fix quality — `ROAD [rtk]`, `[float]`, `[gps]`, `[nofix]`, also an event `FIX:<name>` on
+every change) and the intersection that
 triggered GPS mode as a latched `PoseStamped` on `active_intersection_topic`
 (`/road_follower/active_intersection`, empty `frame_id` when none) — the `map_data` viewer
 tracker shows both.
