@@ -66,6 +66,7 @@ from robot_mission_planner.road_goal import (
     is_behind,
     nearest_index,
     passed_along,
+    remaining_route_length,
     route_offset_limit,
     select_carrot_goal,
     select_path_goal,
@@ -79,6 +80,7 @@ _WGS84_E2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
 GPS_REASON_INTERSECTION = "intersection"
 GPS_REASON_NO_ROAD = "no_road"
 GPS_REASON_STUCK = "stuck"
+GPS_REASON_FINAL = "final"  # last metres to the goal: GPS all the way in, never back to ROAD
 
 
 def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
@@ -235,6 +237,11 @@ class RoadFollower(Node):
         self.declare_parameter("goal_reached_radius", 5.0)  # m to the last waypoint = arrived
         self.declare_parameter("arrival_index_window", 3)  # waypoints from the end that count
         self.declare_parameter("arrived_hold", 0.0)  # s to stay ARRIVED before IDLE (signal later)
+        # Final approach: with less route left than this (m) the follower stays in GPS to the
+        # last waypoint. The planner puts that waypoint on the goal coordinate itself, which
+        # can be off the footway (a loading zone on a lawn), where there is no road to follow
+        # and the road goal would pull the robot back onto the path. 0 = off.
+        self.declare_parameter("final_approach_distance", 15.0)
         self.declare_parameter("event_topic", "~/event")  # latched String mission events
         # qr_goal_topic is latched: after a restart the follower would receive the previous
         # goal again and drive off unprompted. Goals stamped before the node started (minus
@@ -295,6 +302,7 @@ class RoadFollower(Node):
         self.goal_reached_radius = float(gp("goal_reached_radius"))
         self.arrival_index_window = int(gp("arrival_index_window"))
         self.arrived_hold = float(gp("arrived_hold"))
+        self.final_approach_distance = float(gp("final_approach_distance"))
         self.stale_goal_tolerance = float(gp("stale_goal_tolerance"))
 
         # --- TF ---
@@ -994,7 +1002,10 @@ class RoadFollower(Node):
         closest, closest_xy = self._closest_intersection(rob_xy)
 
         if self.state == self.STATE_ROAD:
-            if closest < self.enter_threshold:
+            remaining = self._remaining_route_length(rob_xy)
+            if remaining < self.final_approach_distance:
+                self._enter_gps(GPS_REASON_FINAL, None, f"{remaining:.1f} m of route left")
+            elif closest < self.enter_threshold:
                 self._enter_gps(GPS_REASON_INTERSECTION, closest_xy, f"approaching intersection ({closest:.2f} m)")
             elif self.stuck_fallback_to_gps and self._commander_stuck():
                 self._enter_gps(GPS_REASON_STUCK, None, "commander reports STUCK")
@@ -1003,6 +1014,17 @@ class RoadFollower(Node):
             return
 
         # STATE_GPS: decide whether to go back to road following
+        if self._gps_reason == GPS_REASON_FINAL:
+            # Final approach: the sequence already runs to the last waypoint = the goal, so
+            # nothing takes the robot out of GPS again; only is_arrived ends this state.
+            return
+        if self._remaining_route_length(rob_xy) < self.final_approach_distance:
+            # Ran out of route while in a fallback / intersection GPS run: keep the sequence,
+            # only change the reason so the exit tests below stop applying.
+            self.get_logger().info("Final approach: staying in GPS mode to the last waypoint.")
+            self._gps_reason = GPS_REASON_FINAL
+            self._active_intersection = None
+            return
         if closest < self.enter_threshold and self._gps_reason != GPS_REASON_INTERSECTION:
             # A fallback GPS run reached an intersection: treat it as an intersection entry.
             self._gps_reason = GPS_REASON_INTERSECTION
@@ -1054,6 +1076,16 @@ class RoadFollower(Node):
             why = "road path available again"
 
         self._enter_road(why)
+
+    def _remaining_route_length(self, rob_xy) -> float:
+        """
+        Route length (m) from the robot to the last waypoint, or ``inf`` when the final
+        approach does not apply: it is switched off, there is no route yet, or the route
+        loops (a looping file route has no end to approach).
+        """
+        if self.final_approach_distance <= 0 or self.loop or not self.waypoints_map:
+            return float("inf")
+        return remaining_route_length(rob_xy, self.waypoints_map, self.current_waypoint_index)
 
     def _enter_gps(self, reason, intersection_xy, why):
         self.get_logger().info(f"{why}. Switching to GPS mode ({reason}).")

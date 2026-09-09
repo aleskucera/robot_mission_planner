@@ -122,3 +122,30 @@ def test_route_offset_limit_relative_to_robot():
     assert route_offset_limit(None, 5.0, 2.0, 10.0) == 5.0       # no pose: base
     assert route_offset_limit(9.5, 5.0, 2.0, 0.0) == 11.5        # no cap
     assert route_offset_limit(30.0, 12.0, 2.0, 10.0) == 12.0     # cap never below the base
+
+
+# ---------------------------------------------------------------- final approach
+from robot_mission_planner.road_goal import remaining_route_length  # noqa: E402
+
+
+def test_remaining_route_length_counts_robot_and_segments():
+    wps = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0)]
+    # 3 m before waypoint 1, then 10 + 10 m of route left
+    assert remaining_route_length((7.0, 0.0), wps, 1) == pytest.approx(23.0)
+    assert remaining_route_length((30.0, 0.0), wps, 3) == pytest.approx(0.0)
+    # off the line: the robot leg is the straight distance to the current waypoint
+    assert remaining_route_length((10.0, 4.0), wps, 2) == pytest.approx(
+        math.hypot(10.0, 4.0) + 10.0
+    )
+
+
+def test_remaining_route_length_skips_missing_and_clamps_the_index():
+    wps = [(0.0, 0.0), None, (20.0, 0.0)]
+    assert remaining_route_length((0.0, 0.0), wps, 0) == pytest.approx(20.0)
+    assert remaining_route_length((0.0, 0.0), wps, 99) == pytest.approx(20.0)  # index clamped
+    assert remaining_route_length((0.0, 0.0), wps, -5) == pytest.approx(20.0)
+
+
+def test_remaining_route_length_without_a_usable_route_is_infinite():
+    assert remaining_route_length((0.0, 0.0), [], 0) == float("inf")
+    assert remaining_route_length((0.0, 0.0), [None, None], 0) == float("inf")

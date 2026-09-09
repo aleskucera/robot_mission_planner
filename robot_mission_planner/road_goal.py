@@ -137,6 +137,29 @@ def is_arrived(
     return _dist(robot_xy, pts[-1]) <= radius
 
 
+def remaining_route_length(
+    robot_xy: Point, waypoints_xy: list[Point | None], current_index: int
+) -> float:
+    """
+    Route length still ahead: robot -> waypoint ``current_index`` -> ... -> last waypoint.
+
+    Used for the final approach (the follower stays in GPS for the last few metres, where
+    the route leaves the footway towards the goal itself). ``None`` entries (waypoints
+    without a map transform yet) are skipped and an empty route gives ``inf``, so a caller
+    comparing against a threshold never triggers on missing data.
+    """
+    if not waypoints_xy:
+        return float("inf")
+    idx = max(0, min(int(current_index), len(waypoints_xy) - 1))
+    pts = [p for p in waypoints_xy[idx:] if p is not None]
+    if not pts:
+        return float("inf")
+    total = _dist(robot_xy, pts[0])
+    for a, b in zip(pts, pts[1:]):
+        total += _dist(a, b)
+    return total
+
+
 def nearest_index(points_xy: list[Point | None], xy: Point) -> int:
     """Index of the point closest to ``xy`` (``None`` entries skipped; 0 if none)."""
     best, best_d = 0, float("inf")

@@ -49,14 +49,17 @@ arrive in any other state than IDLE are ignored. States are on `~/state`, missio
   `intersection_exit_threshold` from every intersection **and** has passed the
   intersection along the route direction (`gps_exit_require_passed`), optionally after
   `gps_exit_min_waypoints` more waypoints; fallback entries end when the road path is
-  back / the commander is no longer stuck.
+  back / the commander is no longer stuck. The last `final_approach_distance` (15 m) of
+  route are always driven in GPS (`GPS:final`, never left again): the route's last waypoint
+  is the goal coordinate itself, which may sit off the footway where there is no road to
+  follow.
 * **Road-goal sanity**: goals farther than `road_goal_max_route_offset` from the planned
   GPX line or behind the robot (`road_goal_reject_behind`) are rejected, so a bad
   segmentation cannot pull the robot off the mission. Commander service calls are
   watched with `service_timeout`.
 
 The node publishes its own state as a latched `std_msgs/String` on `state_topic`
-(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck>`) and the intersection that
+(`/road_follower/state`: `ROAD` or `GPS:<intersection|no_road|stuck|final>`) and the intersection that
 triggered GPS mode as a latched `PoseStamped` on `active_intersection_topic`
 (`/road_follower/active_intersection`, empty `frame_id` when none) — the `map_data` viewer
 tracker shows both.

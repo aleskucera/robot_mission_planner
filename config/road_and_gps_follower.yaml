@@ -89,6 +89,11 @@
     goal_reached_radius: 5.0            # m to the last waypoint = arrived
     arrival_index_window: 3             # waypoints from the end that count
     arrived_hold: 0.0                   # s in ARRIVED before IDLE
+    # Final approach (P2): with less route left than this (m) the follower enters GPS with
+    # reason "final" and stays there to the last waypoint. The planner puts that waypoint on
+    # the goal coordinate itself, off the footway when the goal is off it, where there is no
+    # road to follow. 0 = off (road following right up to the arrival radius).
+    final_approach_distance: 15.0
     # /qr_goal/goal is latched: a goal stamped earlier than this (s) before the follower
     # started is the previous run's goal and is ignored (0 = accept everything).
     stale_goal_tolerance: 2.0
