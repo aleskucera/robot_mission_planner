@@ -88,3 +88,37 @@ def test_is_arrived_radius_and_index_guard():
     assert not is_arrived((30.0, 0.0), wps, 4, radius=5.0)  # 10 m away
     assert not is_arrived((40.0, 0.0), [], 0, radius=5.0)
     assert is_arrived((41.0, 0.0), [None, (40.0, 0.0)], 1, radius=5.0)
+
+
+# ---------------------------------------------------------------- intersection exit / offsets
+from robot_mission_planner.road_goal import nearest_index, passed_along, route_offset_limit  # noqa: E402
+
+
+def test_nearest_index_skips_missing_points():
+    pts = [(0.0, 0.0), None, (10.0, 0.0), (20.0, 0.0)]
+    assert nearest_index(pts, (11.0, 1.0)) == 2
+    assert nearest_index([None, None], (0.0, 0.0)) == 0
+
+
+def test_passed_along_right_angle_junction():
+    # Route comes from the west, turns north at the node (0, 0). The outgoing direction is
+    # north; a robot 3 m north of the node has passed it, 3 m west or east of it has not.
+    north = (0.0, 1.0)
+    assert passed_along((0.0, 3.0), (0.0, 0.0), north)
+    assert not passed_along((-3.0, 0.0), (0.0, 0.0), north)
+    assert not passed_along((3.0, 0.0), (0.0, 0.0), north)
+    # With the *incoming* direction (east) the same robot north of the node would never pass:
+    assert not passed_along((0.0, 3.0), (0.0, 0.0), (1.0, 0.0))
+
+
+def test_passed_along_without_direction_is_true():
+    assert passed_along((0.0, 0.0), (5.0, 5.0), None)
+
+
+def test_route_offset_limit_relative_to_robot():
+    assert route_offset_limit(0.5, 5.0, 2.0, 10.0) == 5.0        # robot on the line: base
+    assert route_offset_limit(5.5, 5.0, 2.0, 10.0) == 7.5        # robot off: robot + margin
+    assert route_offset_limit(9.5, 5.0, 2.0, 10.0) == 10.0       # capped
+    assert route_offset_limit(None, 5.0, 2.0, 10.0) == 5.0       # no pose: base
+    assert route_offset_limit(9.5, 5.0, 2.0, 0.0) == 11.5        # no cap
+    assert route_offset_limit(30.0, 12.0, 2.0, 10.0) == 12.0     # cap never below the base

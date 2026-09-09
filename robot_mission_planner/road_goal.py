@@ -135,3 +135,43 @@ def is_arrived(
     if current_index < len(waypoints_xy) - 1 - max(0, index_window):
         return False
     return _dist(robot_xy, pts[-1]) <= radius
+
+
+def nearest_index(points_xy: list[Point | None], xy: Point) -> int:
+    """Index of the point closest to ``xy`` (``None`` entries skipped; 0 if none)."""
+    best, best_d = 0, float("inf")
+    for i, p in enumerate(points_xy):
+        if p is None:
+            continue
+        d = _dist(p, xy)
+        if d < best_d:
+            best, best_d = i, d
+    return best
+
+
+def passed_along(robot_xy: Point, node_xy: Point, direction) -> bool:
+    """
+    True when the robot is beyond ``node_xy`` along ``direction`` (a unit vector or
+    ``None``). With no direction there is nothing to test, so the node counts as passed.
+    """
+    if direction is None:
+        return True
+    rel = (robot_xy[0] - node_xy[0], robot_xy[1] - node_xy[1])
+    return rel[0] * float(direction[0]) + rel[1] * float(direction[1]) > 0.0
+
+
+def route_offset_limit(
+    robot_offset: float | None, base_limit: float, margin: float, hard_limit: float
+) -> float:
+    """
+    How far off the planned route a road goal may be: at least ``base_limit``, or the
+    robot's own offset plus ``margin`` when the robot is already farther off the OSM line
+    than that (a correct carrot 2 m ahead on the real path sits next to the robot, not
+    on the map centreline), capped at ``hard_limit`` (``<= 0`` = no cap).
+    """
+    limit = base_limit
+    if robot_offset is not None and math.isfinite(robot_offset):
+        limit = max(limit, robot_offset + margin)
+    if hard_limit > 0:
+        limit = min(limit, max(hard_limit, base_limit))
+    return limit
