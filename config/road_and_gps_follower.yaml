@@ -89,7 +89,9 @@
     start_delay: 5.0                    # s: route received -> first command
     goal_reached_radius: 5.0            # m to the last waypoint = arrived
     arrival_index_window: 3             # waypoints from the end that count
-    arrived_hold: 0.0                   # s in ARRIVED before IDLE
+    # s in ARRIVED before IDLE: long enough for the arrival signal (mission_signal) and for
+    # the operator to see ARRIVED on the HUD; the next QR goal is the continue signal.
+    arrived_hold: 2.0
     # Final approach (P2): with less route left than this (m) the follower enters GPS with
     # reason "final" and stays there to the last waypoint. The planner puts that waypoint on
     # the goal coordinate itself, off the footway when the goal is off it, where there is no

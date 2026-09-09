@@ -148,6 +148,30 @@ default camera is the Odin (`/odin1/image/compressed`); the Basler
 (`/camera/image_color/compressed`) is a backup that is not mounted. Parser and decoder are
 pure functions in `qr_goal.py`, tested in `tests/test_qr_goal.py`.
 
+## Arrival and continue signal
+
+Robotour requires the robot to indicate that it has arrived, and homologation tests the
+signalization together with the QR-code entry and the continue of the trial. On **ARRIVED**
+the follower publishes the event and `mission_signal` plays the arrival sound (by default it
+says "Arrived" through `helhest_bringup`'s `speak.py` → sound_play, so the NUC
+`sound.launch` speaker has to be up; `backend: aplay` plays a wav instead, `backend: log`
+only logs). The follower then holds ARRIVED for `arrived_hold` (2 s) so the state is visible
+on the HUD before it goes IDLE. **The team-defined continue signal is showing the next QR
+code**: the follower accepts it once it is IDLE and drives the next leg, and the first goal
+after an arrival is also announced as the `CONTINUE` event.
+
+```bash
+ros2 launch robot_mission_planner mission_signal.launch
+```
+
+The event → text/sound table is in `config/mission_signal.yaml` (`speech:` for the `speak`
+backend, `sounds:` for `aplay`, keyed by the event name before the first `:`); an event that
+is not listed is only logged and a missing wav degrades to one warning. `_signal_gpio()` in
+`mission_signal.py` is the hook for the light/GPIO backend. The event topic is latched and
+`std_msgs/String` carries no stamp, so the first message received within `ignore_latched_s`
+(1 s) of the node start is dropped as the previous run's latched event — a genuinely new
+event in that first second is lost with it.
+
 ## Operator view (rviz)
 
 ```bash

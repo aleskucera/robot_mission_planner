@@ -411,6 +411,9 @@ class RoadFollower(Node):
         self._plan_timer = None  # retry / start-delay / timeout timer
         self._plan_started = 0.0
         self._arrived_time = 0.0
+        # R1: the team-defined "continue" signal is the next QR code shown to the robot, so
+        # the first goal accepted after an arrival is announced as CONTINUE as well.
+        self._continue_after_arrival = False
         self._plan_client = None
 
         self.pose_gps = None
@@ -1184,7 +1187,9 @@ class RoadFollower(Node):
         if self._plan_client is None:
             self.get_logger().error("QR goal received but the PlanRoute action client is unavailable")
             return
-        # TODO(signal): acknowledge the QR goal audibly here as well.
+        if self._continue_after_arrival:
+            self._continue_after_arrival = False
+            self._event("CONTINUE")
         self._event(f"GOAL:{lat:.7f},{lon:.7f}")
         self.get_logger().info(f"QR goal accepted: {lat:.7f}, {lon:.7f}; requesting a route")
         self._mission_goal = (lat, lon)
@@ -1295,6 +1300,7 @@ class RoadFollower(Node):
         self._cancel_current_goal()
         self._gps_reason = None
         self._active_intersection = None
+        self._continue_after_arrival = True
         self._event("ARRIVED")
         self._publish_state()
 
