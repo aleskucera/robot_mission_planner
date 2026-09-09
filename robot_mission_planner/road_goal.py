@@ -209,3 +209,42 @@ def route_offset_limit(
     if hard_limit > 0:
         limit = min(limit, max(hard_limit, base_limit))
     return limit
+
+
+def _point_segment_distance(p: Point, a: Point, b: Point) -> float:
+    """Distance from ``p`` to the segment ``a`` -> ``b`` (to ``a`` for a degenerate one)."""
+    abx, aby = b[0] - a[0], b[1] - a[1]
+    denom = abx * abx + aby * aby
+    if denom <= 0.0:
+        return _dist(p, a)
+    t = ((p[0] - a[0]) * abx + (p[1] - a[1]) * aby) / denom
+    t = min(1.0, max(0.0, t))
+    return math.hypot(p[0] - (a[0] + t * abx), p[1] - (a[1] + t * aby))
+
+
+def indices_near_polyline(
+    points: list[Point], polyline: list[Point], max_distance: float
+) -> list[int]:
+    """
+    Indices of the points that lie at most ``max_distance`` from ``polyline`` (its
+    vertices, in order).
+
+    Used to keep only the OSM intersections that sit on the planned route: a ring on a
+    side junction the route merely drives past is not ours. ``max_distance <= 0`` or a
+    polyline with fewer than two vertices means "no filter": every index is returned.
+    """
+    if max_distance <= 0.0 or len(polyline) < 2:
+        return list(range(len(points)))
+    kept = []
+    for i, p in enumerate(points):
+        for a, b in zip(polyline, polyline[1:]):
+            # Cheap bounding-box reject first: a route has many segments, and all but a
+            # few are nowhere near the point.
+            if not min(a[0], b[0]) - max_distance <= p[0] <= max(a[0], b[0]) + max_distance:
+                continue
+            if not min(a[1], b[1]) - max_distance <= p[1] <= max(a[1], b[1]) + max_distance:
+                continue
+            if _point_segment_distance(p, a, b) <= max_distance:
+                kept.append(i)
+                break
+    return kept

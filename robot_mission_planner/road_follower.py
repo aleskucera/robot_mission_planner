@@ -63,6 +63,7 @@ from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_mission_planner.road_goal import (
+    indices_near_polyline,
     is_arrived,
     is_behind,
     latlon_distance,
@@ -192,6 +193,10 @@ class RoadFollower(Node):
         # --- Thresholds ---
         self.declare_parameter("intersection_enter_threshold", 3.0)  # m: ROAD -> GPS
         self.declare_parameter("intersection_exit_threshold", 4.0)  # m: from all intersections
+        # Only intersections this close (m) to the planned route take part in the enter/exit
+        # decisions (P4): a ring on a side junction the route merely drives past is not ours
+        # (273 rings in kralovska_obora, 16 m apart). 0 = every ring counts, as before.
+        self.declare_parameter("intersection_route_max_offset", 3.0)
         self.declare_parameter("gps_goal_threshold", 3.0)  # m: waypoint reached
         self.declare_parameter("lookahead_sync_window", 15)  # waypoints searched for the closest
         self.declare_parameter("road_goal_update_distance", 1.0)  # m: re-send active road goal
@@ -299,6 +304,7 @@ class RoadFollower(Node):
         self.telemetry_url = gp("telemetry_url")
         self.enter_threshold = gp("intersection_enter_threshold")
         self.exit_threshold = gp("intersection_exit_threshold")
+        self.intersection_route_max_offset = float(gp("intersection_route_max_offset"))
         self.gps_threshold = gp("gps_goal_threshold")
         self.lookahead_sync_window = gp("lookahead_sync_window")
         self.road_goal_update_distance = gp("road_goal_update_distance")
@@ -420,6 +426,7 @@ class RoadFollower(Node):
         self._last_road_path_time = None  # node clock seconds of the last road path
         self._intersections = None  # PoseArray as received
         self._intersections_map = None  # np.ndarray (N, 2) in map_frame
+        self._intersections_on_route = None  # the subset of them on the planned route
         self._goal_handle = None
         self._goal_active = False
         self._threshold_triggered = False
@@ -558,6 +565,7 @@ class RoadFollower(Node):
         self._tf_ready = True
         self._process_waypoints()
         self._intersections_map = None  # cached in the old map_frame
+        self._intersections_on_route = None
         if first:
             self.get_logger().info(
                 f"Got {self.waypoint_src_frame} -> {self.map_frame} transform; "
@@ -658,6 +666,7 @@ class RoadFollower(Node):
         self._gps_entry_index = 0
         self._gps_route_dir = None
         self._last_road_goal = None
+        self._intersections_on_route = None  # filtered against the old route
         if self.src_to_map is not None:
             self._process_waypoints()
         else:
@@ -675,6 +684,7 @@ class RoadFollower(Node):
             self._route_a, self._route_b = xy[:-1], xy[1:]
         else:
             self._route_a = self._route_b = np.empty((0, 2))
+        self._intersections_on_route = None  # the route polyline moved
 
     def _raw_to_src(self, point):
         """Waypoint in the source frame (ECEF for commander, UTM for nav2)."""
@@ -782,7 +792,31 @@ class RoadFollower(Node):
                 return None
             pts = pts @ m[:3, :3].T + m[:3, 3]
         self._intersections_map = pts[:, :2]
+        self._intersections_on_route = None  # filtered from the previous array
         return self._intersections_map
+
+    def _intersections_on_route_in_map(self):
+        """
+        The intersections that take part in the ROAD <-> GPS decisions: those at most
+        ``intersection_route_max_offset`` from the planned route polyline (P4). Rings on
+        side junctions the route only drives past no longer put the follower into GPS mode.
+        Cached until the intersection array or the route changes; without a route (or with
+        the parameter at 0) every ring counts, as before.
+        """
+        inter = self._intersections_in_map()
+        if inter is None or self.intersection_route_max_offset <= 0 or not self._route_a.size:
+            return inter
+        if self._intersections_on_route is None:
+            route = [p for p in self.waypoints_map if p is not None]
+            keep = indices_near_polyline(
+                [(float(x), float(y)) for x, y in inter], route, self.intersection_route_max_offset
+            )
+            self._intersections_on_route = inter[np.asarray(keep, dtype=int)]
+            self.get_logger().info(
+                f"{len(keep)} of {len(inter)} intersections are within "
+                f"{self.intersection_route_max_offset:.1f} m of the route; the rest are ignored."
+            )
+        return self._intersections_on_route
 
     def _path_callback(self, msg):
         if not msg.poses:
@@ -1076,8 +1110,8 @@ class RoadFollower(Node):
 
     def _closest_intersection(self, rob_xy):
         """(distance, (x, y)) of the closest intersection in map_frame, or (inf, None)."""
-        inter = self._intersections_in_map()
-        if inter is not None:
+        inter = self._intersections_on_route_in_map()
+        if inter is not None and inter.size:
             d = np.hypot(inter[:, 0] - rob_xy[0], inter[:, 1] - rob_xy[1])
             i = int(np.argmin(d))
             return float(d[i]), (float(inter[i, 0]), float(inter[i, 1]))

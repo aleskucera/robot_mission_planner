@@ -165,3 +165,37 @@ def test_latlon_distance_metres():
     )
     # the start code seen again: well inside the 2 m pending-goal threshold
     assert latlon_distance((50.1103476, 14.4159857), (50.1103480, 14.4159860)) < 2.0
+
+
+# ---------------------------------------------------------------- ring pruning (P4)
+from robot_mission_planner.road_goal import indices_near_polyline  # noqa: E402
+
+
+def test_indices_near_polyline_keeps_only_the_rings_on_the_route():
+    # Route east along y = 0, then north at (20, 0).
+    route = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 10.0)]
+    rings = [
+        (5.0, 1.0),    # on the route
+        (12.0, 8.0),   # a side junction 8 m off it
+        (20.0, 0.0),   # the corner node itself
+        (23.5, 5.0),   # 3.5 m off the northbound leg
+        (20.0, 12.0),  # 2 m past the end of the route
+    ]
+    assert indices_near_polyline(rings, route, 3.0) == [0, 2, 4]
+
+
+def test_indices_near_polyline_off_and_without_a_route():
+    rings = [(5.0, 1.0), (12.0, 8.0)]
+    route = [(0.0, 0.0), (10.0, 0.0)]
+    assert indices_near_polyline(rings, route, 0.0) == [0, 1]  # 0 = filter off
+    assert indices_near_polyline(rings, [(0.0, 0.0)], 3.0) == [0, 1]  # no polyline yet
+    assert indices_near_polyline([], route, 3.0) == []
+
+
+def test_indices_near_polyline_measures_to_the_segment_not_the_vertices():
+    # Midway between two waypoints 20 m apart: 1 m from the segment, 10 m from either end.
+    route = [(0.0, 0.0), (20.0, 0.0)]
+    assert indices_near_polyline([(10.0, 1.0)], route, 3.0) == [0]
+    assert indices_near_polyline([(10.0, 5.0)], route, 3.0) == []
+    # Before the start of the route the distance is the one to the first vertex.
+    assert indices_near_polyline([(-4.0, 0.0)], route, 3.0) == []

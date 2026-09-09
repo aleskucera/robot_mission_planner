@@ -48,6 +48,10 @@
     # Thresholds
     intersection_enter_threshold: 5.0   # m: switch ROAD -> GPS
     intersection_exit_threshold: 6.0    # m: from every intersection to switch back
+    # Only intersections within this distance (m) of the planned route are considered at
+    # all: kralovska_obora has 273 rings, 16 m apart, and a ring on a side junction the
+    # route only drives past must not switch the follower to GPS. 0 = every ring counts.
+    intersection_route_max_offset: 3.0
     gps_goal_threshold: 4.0             # m: waypoint / road goal reached
     lookahead_sync_window: 15           # waypoints searched for the closest one
     road_goal_update_distance: 1.0      # m: min shift of the road goal to re-send it
