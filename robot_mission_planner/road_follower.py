@@ -58,6 +58,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from ros2_numpy import numpify
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -153,6 +154,10 @@ class RoadFollower(Node):
         # latched PoseStamped in map_frame of the intersection that triggered GPS mode
         # (empty frame_id = none); the map_data viewer draws the enter/exit circles around it
         self.declare_parameter("active_intersection_topic", "~/active_intersection")
+        # Trigger service that stops the current leg from any state (F7): commander STOP,
+        # every pending timer cancelled, back to IDLE. Cheaper than the e-stop, which costs
+        # 5 points in the competition.
+        self.declare_parameter("abort_service", "~/abort")
         self.declare_parameter("switch_mode_service", "/crl_commander/switch_mode")
         self.declare_parameter(
             "configure_sequence_service", "/crl_commander/configure_sequence_mode"
@@ -351,6 +356,7 @@ class RoadFollower(Node):
         self._active_int_pub = self.create_publisher(
             PoseStamped, gp("active_intersection_topic"), latched
         )
+        self._abort_srv = self.create_service(Trigger, gp("abort_service"), self._abort_callback)
         self._published_active = object()  # sentinel so the first state is always published
         self.create_timer(5.0, self._publish_waypoints_markers)
 
@@ -1291,6 +1297,32 @@ class RoadFollower(Node):
         self._active_intersection = None
         self._event("ARRIVED")
         self._publish_state()
+
+    def _abort_callback(self, request, response):
+        """
+        ``~/abort``: give up the current leg from wherever we are. The commander is stopped,
+        the planning / start-delay / hand-over timers are dropped and a PlanRoute goal still
+        in flight is cancelled, so nothing can revive the leg after the operator asked to
+        stop. The follower is then IDLE and takes the next QR goal as usual.
+        """
+        left = self._state_text()
+        self.get_logger().warning(f"Abort requested while {left}")
+        self._cancel_plan_timer()
+        if self._pending_goal_timer:
+            self._pending_goal_timer.cancel()
+            self._pending_goal_timer = None
+        self._cancel_current_goal()
+        if self._plan_goal_handle is not None:
+            try:
+                self._plan_goal_handle.cancel_goal_async()
+            except Exception as e:  # noqa: BLE001 - the abort must never fail on this
+                self.get_logger().warning(f"Could not cancel the PlanRoute goal: {e}")
+            self._plan_goal_handle = None
+        self._event(f"ABORT:{left}")
+        self._enter_idle("aborted by operator")
+        response.success = True
+        response.message = f"aborted while {left}, follower is IDLE"
+        return response
 
     def _enter_idle(self, why: str):
         self.get_logger().info(f"{why}. Waiting for a QR goal (IDLE).")

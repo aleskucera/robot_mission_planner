@@ -24,8 +24,11 @@ audible signal will be added here), waits `start_delay` (5 s) and then follows t
 with the ROAD/GPS logic below. Within `goal_reached_radius` (5 m) of the last waypoint it
 stops the commander, reports **ARRIVED** and returns to IDLE for the next goal; QR goals that
 arrive in any other state than IDLE are ignored. States are on `~/state`, mission events
-(`GOAL:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `PLAN_FAILED:…`, `IDLE`) on
-`~/event`. A `gps_file` bypasses all of this and follows the file from the start.
+(`GOAL:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `ABORT:<state>`, `PLAN_FAILED:…`,
+`IDLE`) on `~/event`. `~/abort` (`std_srvs/Trigger`) gives up the current leg from any state
+— commander STOP, pending timers and a PlanRoute goal in flight cancelled, back to IDLE —
+without the 5-point e-stop penalty. A `gps_file` bypasses all of this and follows the file
+from the start.
 
 * **ROAD** state: a goal on the visually detected road is sent to the commander (`goto`),
   re-sent only when it moved more than `road_goal_update_distance` or the previous goal was
@@ -132,6 +135,9 @@ ros2 service call /qr_goal/enable std_srvs/srv/SetBool "{data: false}"   # pause
 # manual entry (the loading-zone QR is handed to the team in the service area):
 ros2 run robot_mission_planner qr_goal_send "geo:50.1103476,14.4159857"
 ros2 run robot_mission_planner qr_goal_send 50.1103476,14.4159857 --direct   # no qr_goal running
+
+# give up the current leg (commander STOP, follower back to IDLE):
+ros2 service call /road_follower/abort std_srvs/srv/Trigger
 ```
 
 Parameters (in `config/qr_goal.yaml`): `image_topic`, `image_transport` (`compressed` | `raw`),

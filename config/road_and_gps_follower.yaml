@@ -26,6 +26,7 @@
     state_topic: "~/state"
     event_topic: "~/event"
     active_intersection_topic: "~/active_intersection"
+    abort_service: "~/abort"                       # std_srvs/Trigger: stop the leg, go IDLE
     switch_mode_service: "/crl_commander/switch_mode"
     configure_sequence_service: "/crl_commander/configure_sequence_mode"
     markers_topic: "gps_waypoints_markers"
