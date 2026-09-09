@@ -417,23 +417,36 @@ def gps_episode(r, node, radius=9.0):
     carries the robot pose), so it needs no clock alignment with the follower and ignores
     any other GPS episode of the run.
     """
-    ev = r.fake_events()
-
     def near(e):
         p = e.get("pose")
         return p is not None and math.hypot(p[0] - node[0], p[1] - node[1]) <= radius
 
-    i_seq = next(
-        i for i, e in enumerate(ev)
-        if e["event"] == "switch_mode" and e["mode"] == "sequence" and near(e)
-    )
+    # The follower publishes its state right after deciding, i.e. a few ms before the
+    # commander has served (and logged) the goto call that ends the episode: poll the
+    # event file for a moment instead of reading it once.
+    deadline = time.time() + 5.0
+    while True:
+        ev = r.fake_events()
+        i_seq = next(
+            (i for i, e in enumerate(ev)
+             if e["event"] == "switch_mode" and e["mode"] == "sequence" and near(e)),
+            None,
+        )
+        i_end = None
+        if i_seq is not None:
+            i_end = next(
+                (i for i in range(i_seq + 1, len(ev))
+                 if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"),
+                None,
+            )
+        if i_end is not None or time.time() > deadline:
+            break
+        time.sleep(0.2)
+    assert i_seq is not None, f"no sequence switch near {node}\n{r.report()}"
+    assert i_end is not None, f"no goto switch after the sequence near {node}\n{r.report()}"
     i_start = max(
         (i for i in range(i_seq) if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"),
         default=0,
-    )
-    i_end = next(
-        i for i in range(i_seq + 1, len(ev))
-        if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"
     )
     return ev[i_start : i_end + 1]
 
