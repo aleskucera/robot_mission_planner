@@ -26,8 +26,11 @@ stops the commander, reports **ARRIVED** and returns to IDLE for the next goal. 
 that arrives in any other state is buffered and taken as soon as the leg ends, unless it is
 within `pending_goal_min_distance` (2 m) of the goal being driven — that is the same code
 read again. States are on `~/state`, mission events
-(`GOAL:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `ABORT:<state>`, `PLAN_FAILED:…`,
-`IDLE`) on `~/event`. `~/abort` (`std_srvs/Trigger`) gives up the current leg from any state
+(`GOAL:lat,lon`, `HOME:lat,lon`, `PLANNING`, `ROUTE:…`, `START`, `ARRIVED`, `ABORT:<state>`,
+`PLAN_FAILED:…`, `IDLE`) on `~/event`. At the **first** goal of a run the follower records its
+own fix as *home* (the service area): latched on `~/home` and written to `mission_dir`
+(`~/missions/home_<date>.txt` and `home.txt`), which `qr_goal_send --home` sends back as the
+return goal. `~/abort` (`std_srvs/Trigger`) gives up the current leg from any state
 — commander STOP, pending timers and a PlanRoute goal in flight cancelled, back to IDLE —
 without the 5-point e-stop penalty. A `gps_file` bypasses all of this and follows the file
 from the start.
@@ -143,6 +146,9 @@ ros2 service call /qr_goal/enable std_srvs/srv/SetBool "{data: false}"   # pause
 # manual entry (the loading-zone QR is handed to the team in the service area):
 ros2 run robot_mission_planner qr_goal_send "geo:50.1103476,14.4159857"
 ros2 run robot_mission_planner qr_goal_send 50.1103476,14.4159857 --direct   # no qr_goal running
+
+# the return leg: the fix the follower recorded at the first goal of the run
+ros2 run robot_mission_planner qr_goal_send --home            # ~/missions/home.txt, --home-file to override
 
 # give up the current leg (commander STOP, follower back to IDLE):
 ros2 service call /road_follower/abort std_srvs/srv/Trigger

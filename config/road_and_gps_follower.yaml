@@ -25,6 +25,7 @@
     commander_state_topic: "/crl_commander/state"  # crl_commander publishes ~/state
     state_topic: "~/state"
     event_topic: "~/event"
+    home_topic: "~/home"                           # latched GeoPointStamped: the service area
     active_intersection_topic: "~/active_intersection"
     abort_service: "~/abort"                       # std_srvs/Trigger: stop the leg, go IDLE
     switch_mode_service: "/crl_commander/switch_mode"
@@ -108,6 +109,11 @@
     # (qr_goal shows the same code only every republish_after_s). A goal closer than this (m)
     # to the goal of the current leg is that same code seen again and is dropped.
     pending_goal_min_distance: 2.0
+    # Home capture (R3): at the first goal of a run the follower writes its own fix to
+    # <mission_dir>/home_<date>.txt and <mission_dir>/home.txt and publishes it on
+    # home_topic; `qr_goal_send --home` sends it back as the return goal. route_planner
+    # keeps its mission GPX files in the same directory.
+    mission_dir: "~/missions"
 
     # Road-goal sanity and failure handling
     road_goal_max_route_offset: 5.0     # m: reject road goals farther from the planned route (0 = off)

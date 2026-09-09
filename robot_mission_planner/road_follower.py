@@ -265,6 +265,12 @@ class RoadFollower(Node):
         # and the road goal would pull the robot back onto the path. 0 = off.
         self.declare_parameter("final_approach_distance", 15.0)
         self.declare_parameter("event_topic", "~/event")  # latched String mission events
+        # Home capture (R3): the fix at the first goal of a run is the service area, which
+        # the return leg has to come back to. It is written to mission_dir (where
+        # route_planner keeps its GPX files as well) and published latched on home_topic,
+        # so the return goal can be sent with `qr_goal_send --home` instead of typed in.
+        self.declare_parameter("home_topic", "~/home")  # latched GeoPointStamped
+        self.declare_parameter("mission_dir", "~/missions")
         # qr_goal_topic is latched: after a restart the follower would receive the previous
         # goal again and drive off unprompted. Goals stamped before the node started (minus
         # this tolerance, s) are ignored; 0 = accept everything.
@@ -333,6 +339,7 @@ class RoadFollower(Node):
         self.final_approach_distance = float(gp("final_approach_distance"))
         self.stale_goal_tolerance = float(gp("stale_goal_tolerance"))
         self.pending_goal_min_distance = float(gp("pending_goal_min_distance"))
+        self.mission_dir = str(gp("mission_dir"))
 
         # --- TF ---
         self.tf_buffer = Buffer()
@@ -377,6 +384,7 @@ class RoadFollower(Node):
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
         self._state_pub = self.create_publisher(String, gp("state_topic"), latched)
         self._event_pub = self.create_publisher(String, gp("event_topic"), latched)
+        self._home_pub = self.create_publisher(GeoPointStamped, gp("home_topic"), latched)
         self._active_int_pub = self.create_publisher(
             PoseStamped, gp("active_intersection_topic"), latched
         )
@@ -431,6 +439,7 @@ class RoadFollower(Node):
         self._service_watchdogs = []
         self._mission_goal = None  # (lat, lon) of the QR goal being planned / followed
         self._pending_goal = None  # (lat, lon, stamp) seen while busy, taken on IDLE
+        self._home = None  # (lat, lon) of the service area, captured at the first goal
         self._plan_attempt = 0
         self._plan_goal_handle = None
         self._plan_timer = None  # retry / start-delay / timeout timer
@@ -1271,6 +1280,7 @@ class RoadFollower(Node):
             self._continue_after_arrival = False
             self._event("CONTINUE")
         self._event(f"GOAL:{lat:.7f},{lon:.7f}")
+        self._capture_home()
         self.get_logger().info(f"QR goal accepted: {lat:.7f}, {lon:.7f}; requesting a route")
         self._mission_goal = (lat, lon)
         self._plan_attempt = 0
@@ -1296,6 +1306,41 @@ class RoadFollower(Node):
             "it is taken as soon as this leg ends",
             throttle_duration_sec=5.0,
         )
+
+    def _capture_home(self):
+        """
+        Record where the run started (R3): the fix at the first accepted goal is the service
+        area. Written to ``mission_dir`` as ``home_<date>.txt`` and ``home.txt`` (the file
+        ``qr_goal_send --home`` reads) and published latched on ``home_topic``. Once per
+        process; with no fix yet it is simply tried again at the next goal.
+        """
+        if self._home is not None:
+            return
+        if self.pose_gps is None:
+            self.get_logger().warning("No GNSS fix yet: home not captured for this run")
+            return
+        lat, lon = self.pose_gps["lat"], self.pose_gps["lon"]
+        self._home = (lat, lon)
+        msg = GeoPointStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "wgs84"
+        msg.position.latitude, msg.position.longitude = lat, lon
+        self._home_pub.publish(msg)
+        written = []
+        try:
+            directory = os.path.expanduser(self.mission_dir)
+            os.makedirs(directory, exist_ok=True)
+            for name in (f"home_{time.strftime('%Y%m%d-%H%M%S')}.txt", "home.txt"):
+                path = os.path.join(directory, name)
+                with open(path, "w") as f:
+                    f.write(f"{lat:.7f},{lon:.7f}\n")
+                written.append(path)
+        except OSError as e:
+            self.get_logger().error(f"Could not write the home file: {e}")
+        self.get_logger().info(
+            f"Home captured: {lat:.7f}, {lon:.7f} -> {', '.join(written) or 'not written'}"
+        )
+        self._event(f"HOME:{lat:.7f},{lon:.7f}")
 
     def _request_route(self):
         self._plan_attempt += 1
