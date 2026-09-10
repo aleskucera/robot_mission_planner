@@ -22,7 +22,14 @@ class FollowPathBackend(Backend):
     kind = "follow_path"
     supports_sequence = False
 
-    def __init__(self, node, frames, *, action_name: str = "follow_path", path_spacing: float = 0.25):
+    def __init__(
+        self,
+        node,
+        frames,
+        *,
+        action_name: str = "follow_path",
+        path_spacing: float = 0.25,
+    ):
         super().__init__(node, frames)
         self.path_spacing = max(float(path_spacing), 0.05)
         self._client = ActionClient(node, FollowPath, action_name or "follow_path")
@@ -34,10 +41,14 @@ class FollowPathBackend(Backend):
 
     # ---------------------------------------------------------------- waypoints
     def to_src(self, point):
-        raise NotImplementedError("follow_path drives the road, not a route of waypoints")
+        raise NotImplementedError(
+            "follow_path drives the road, not a route of waypoints"
+        )
 
     def waypoint_msg(self, point):
-        raise NotImplementedError("follow_path drives the road, not a route of waypoints")
+        raise NotImplementedError(
+            "follow_path drives the road, not a route of waypoints"
+        )
 
     def send_sequence(self, waypoints, loop: bool = False):
         raise NotImplementedError("follow_path cannot drive a waypoint sequence")
@@ -46,7 +57,10 @@ class FollowPathBackend(Backend):
     def send_pose(self, x, y, yaw):
         robot = self.frames.robot_pose()
         if robot is None:
-            self.log.warning("No robot pose; cannot build a path to the goal.", throttle_duration_sec=5.0)
+            self.log.warning(
+                "No robot pose; cannot build a path to the goal.",
+                throttle_duration_sec=5.0,
+            )
             return
         goal = FollowPath.Goal()
         goal.path = self._straight_path(robot[:2], (float(x), float(y)))
@@ -97,5 +111,8 @@ class FollowPathBackend(Backend):
         status = future.result().status
         if status == GoalStatus.STATUS_ABORTED:
             # Every preemption by the next path lands here by design.
-            self.log.info("Path aborted (preempted, or the controller gave up).", throttle_duration_sec=5.0)
+            self.log.info(
+                "Path aborted (preempted, or the controller gave up).",
+                throttle_duration_sec=5.0,
+            )
         self.on_goal_inactive()

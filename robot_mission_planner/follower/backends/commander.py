@@ -1,13 +1,13 @@
 """crl_commander on the Helhest NUC: goto for one pose, sequence for a waypoint list."""
 
+import math
+
 from geometry_msgs.msg import PoseArray, PoseStamped
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 
 from robot_mission_planner.follower.backends.base import Backend
 from robot_mission_planner.follower.frames import latlon_to_ecef
-
-import math
 
 
 class CommanderBackend(Backend):
@@ -20,7 +20,9 @@ class CommanderBackend(Backend):
     """
 
     kind = "commander"
-    direct_hand_over = True  # transitionTo() cancels the old goal and re-inits the sequence
+    direct_hand_over = (
+        True  # transitionTo() cancels the old goal and re-inits the sequence
+    )
 
     def __init__(
         self,
@@ -47,10 +49,16 @@ class CommanderBackend(Backend):
         self._srv_types = {"switch": SwitchMode, "configure": ConfigureSequenceMode}
 
         latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self._pub_goal = node.create_publisher(PoseStamped, goal_waypoint_topic, latched)
-        self._pub_sequence = node.create_publisher(PoseArray, goal_sequence_topic, latched)
+        self._pub_goal = node.create_publisher(
+            PoseStamped, goal_waypoint_topic, latched
+        )
+        self._pub_sequence = node.create_publisher(
+            PoseArray, goal_sequence_topic, latched
+        )
         self._cli_switch = node.create_client(SwitchMode, switch_mode_service)
-        self._cli_configure = node.create_client(ConfigureSequenceMode, configure_sequence_service)
+        self._cli_configure = node.create_client(
+            ConfigureSequenceMode, configure_sequence_service
+        )
         node.create_subscription(String, state_topic, self._state_callback, 10)
 
         self.mode = None  # what the commander last reported
@@ -174,7 +182,9 @@ class CommanderBackend(Backend):
 
         future = cli.call_async(req)
         future.add_done_callback(done)
-        self.watch_service_call(future, f"switch_mode('{mode}')", on_timeout=reset_request)
+        self.watch_service_call(
+            future, f"switch_mode('{mode}')", on_timeout=reset_request
+        )
 
     def watch_service_call(self, future, what, on_timeout=None):
         """Log (and optionally react) when a service call does not return in time."""
@@ -185,7 +195,9 @@ class CommanderBackend(Backend):
             timer.cancel()
             self._watchdogs = [t for t in self._watchdogs if t is not timer]
             if not future.done():
-                self.log.error(f"{what} did not respond within {self.service_timeout} s")
+                self.log.error(
+                    f"{what} did not respond within {self.service_timeout} s"
+                )
                 if on_timeout:
                     on_timeout()
 

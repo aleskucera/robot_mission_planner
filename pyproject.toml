@@ -1,0 +1,34 @@
+# Tooling only: the package itself is built by ament_python from setup.py.
+# The house style is map_data's, at the line length this package was formatted with.
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "B008", # function calls in default arguments (common in ROS)
+    "B905", # zip() without strict= - sliding-window pairs differ in length on purpose
+    "E501", # line length is black's business, and comments are left long on purpose
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["robot_mission_planner"]
+# The repo has a launch/ directory, which isort would otherwise take for a local package.
+known-third-party = ["launch", "launch_ros"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

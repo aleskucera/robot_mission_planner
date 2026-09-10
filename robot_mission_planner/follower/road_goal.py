@@ -305,9 +305,10 @@ def smooth(previous: Point | None, current: Point, alpha: float) -> Point:
     if previous is None or alpha <= 0.0:
         return current
     a = min(alpha, 0.99)
-    return a * previous[0] + (1.0 - a) * current[0], a * previous[1] + (
-        1.0 - a
-    ) * current[1]
+    return (
+        a * previous[0] + (1.0 - a) * current[0],
+        a * previous[1] + (1.0 - a) * current[1],
+    )
 
 
 def is_arrived(

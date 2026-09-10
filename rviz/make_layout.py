@@ -22,14 +22,19 @@ import sys
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt  # noqa: E402
-from PyQt5.QtWidgets import QApplication, QDockWidget, QMainWindow, QWidget  # noqa: E402
+from PyQt5.QtWidgets import (  # noqa: E402
+    QApplication,
+    QDockWidget,
+    QMainWindow,
+    QWidget,
+)
 
 # Sizes of the window the layout is built for. Qt rescales it to the real window, but
 # only within reason: restoring a 1080p layout on the jetson's 1600x900 VNC screen does
 # not fit and Qt drops the image docks into the left column instead, so build it at the
 # smaller size -- growing a layout works, shrinking one does not.
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1600, 900
-DEFAULT_SIDE_WIDTH = 320    # Displays / Views column
+DEFAULT_SIDE_WIDTH = 320  # Displays / Views column
 DEFAULT_IMAGE_HEIGHT = 300  # the two camera panels
 # Panel names, and the Name: of the two Image displays, exactly as robotour.rviz spells them.
 SIDE = ["Displays", "Views"]
@@ -79,7 +84,11 @@ def main() -> None:
     if not args.write:
         print(state)
         return
-    path = args.write if os.path.isabs(args.write) else os.path.join(os.path.dirname(__file__), args.write)
+    path = (
+        args.write
+        if os.path.isabs(args.write)
+        else os.path.join(os.path.dirname(__file__), args.write)
+    )
     with open(path) as f:
         config = f.read()
     patched, n = re.subn(r"(?m)^(  QMainWindow State: ).*$", r"\g<1>" + state, config)

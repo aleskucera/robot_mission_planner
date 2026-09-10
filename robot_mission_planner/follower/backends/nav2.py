@@ -1,5 +1,7 @@
 """Nav2: ``NavigateToPose`` for a road goal, ``FollowWaypoints`` / ``FollowGPSWaypoints`` for a route."""
 
+import math
+
 import utm
 from action_msgs.msg import GoalStatus
 from geographic_msgs.msg import GeoPose
@@ -9,8 +11,6 @@ from rclpy.action import ActionClient
 
 from robot_mission_planner.follower.backends.base import Backend
 from robot_mission_planner.follower.frames import transform_xyz
-
-import math
 
 
 class Nav2Backend(Backend):
@@ -22,7 +22,9 @@ class Nav2Backend(Backend):
     kind = "nav2"
     reports_progress = True
 
-    def __init__(self, node, frames, *, use_utm: bool, road_reached_distance: float = 4.0):
+    def __init__(
+        self, node, frames, *, use_utm: bool, road_reached_distance: float = 4.0
+    ):
         super().__init__(node, frames)
         self.use_utm = bool(use_utm)
         self.geo_goals = not self.use_utm
@@ -117,7 +119,9 @@ class Nav2Backend(Backend):
             self.on_goal_inactive()
 
     def _gps_feedback(self, feedback_msg):
-        self.on_waypoint_reached(self._sequence_start + feedback_msg.feedback.current_waypoint)
+        self.on_waypoint_reached(
+            self._sequence_start + feedback_msg.feedback.current_waypoint
+        )
 
     def _result(self, future):
         status = future.result().status

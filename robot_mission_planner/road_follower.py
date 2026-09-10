@@ -52,6 +52,7 @@ transformed into ``map_frame`` through TF (commander backend), or lat/lon -> UTM
 ``utm_frame`` -> ``map_frame`` (nav2 backend with ``use_utm``).
 """
 
+import contextlib
 import math
 import os
 import time
@@ -71,7 +72,8 @@ from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_mission_planner.follower import modes
-from robot_mission_planner.follower.backends import KINDS as BACKEND_KINDS, make_backend
+from robot_mission_planner.follower.backends import KINDS as BACKEND_KINDS
+from robot_mission_planner.follower.backends import make_backend
 from robot_mission_planner.follower.frames import (
     Frames,
     distance_to_polyline,
@@ -105,12 +107,6 @@ GPS_REASON_FINAL = (
 # -1 for none; under trees the float fix plus the OSM centreline offset is what pushes road
 # goals through the route-offset filter, so the operator has to see which one it is.
 FIX_NAMES = {2: "rtk", 1: "float", 0: "gps", -1: "nofix"}
-
-# How much the waypoint source frame -> map_frame transform has to move before the waypoints
-# are re-placed (F9): 0.1 m of translation, or a rotation whose matrix moves by this much in
-# the Frobenius norm (~0.04 deg). Below that it is TF noise, not a new ENU origin.
-TF_SHIFT_EPS = 0.1
-TF_ROTATION_EPS = 1e-3
 
 
 class RoadFollower(Node):
@@ -493,7 +489,7 @@ class RoadFollower(Node):
         # --- Waypoints ---
         self.route = Route()
         self.route.index = self.start_index
-        self.waypoints = []  # backend goal messages (PoseStamped in src frame, or GeoPose)
+        self.waypoints = []  # backend goal messages (a pose in its frame, or a GeoPose)
         self.gps_path = ""
         file_points = self._load_gps_data() if self.mode.route else []
         if file_points:
@@ -703,14 +699,12 @@ class RoadFollower(Node):
             )
             return []
         search = [os.path.join(os.path.dirname(__file__), "..", "data")]
-        try:
+        with contextlib.suppress(Exception):  # not installed: the source tree is enough
             search.append(
                 os.path.join(
                     get_package_share_directory("robot_mission_planner"), "data"
                 )
             )
-        except Exception:
-            pass
         self.gps_path = resolve_file(self.gps_file_name, search)
         if not os.path.exists(self.gps_path):
             self.get_logger().error(f"Route file {self.gps_path} does not exist!")
@@ -816,7 +810,7 @@ class RoadFollower(Node):
         )
         frame = self._intersections.header.frame_id
         if frame and frame != self.map_frame:
-            m = self._lookup_matrix(self.map_frame, frame, timeout=0.5)
+            m = self.frames.matrix(self.map_frame, frame, timeout=0.5)
             if m is None:
                 return None
             pts = pts @ m[:3, :3].T + m[:3, 3]
@@ -941,14 +935,10 @@ class RoadFollower(Node):
         if len(self.route.polyline) < 2:
             return None
         carrot = self._latest_carrot
-        if carrot is not None and self.road_goal_max_ahead > 0:
-            if (
-                math.hypot(carrot[0] - rob_xy[0], carrot[1] - rob_xy[1])
-                > self.road_goal_max_ahead
-            ):
-                carrot = (
-                    None  # beyond the sensor range it can only be a projection artefact
-                )
+        if carrot is not None:
+            distance = math.hypot(carrot[0] - rob_xy[0], carrot[1] - rob_xy[1])
+            if 0 < self.road_goal_max_ahead < distance:
+                carrot = None  # beyond the sensor range: a projection artefact
         if carrot is None and not self.route_goal_without_carrot:
             return None
         return select_route_goal(
@@ -1298,12 +1288,13 @@ class RoadFollower(Node):
                     rob_xy, self._active_intersection, self._gps_route_dir
                 ):
                     return  # still before the intersection along the route
-            if self.require_wp_to_exit and self.waypoints:
-                if (
-                    self._waypoint_distance(self.current_waypoint_index, rob_xy)
-                    >= self.gps_threshold
-                ):
-                    return
+            if (
+                self.require_wp_to_exit
+                and self.waypoints
+                and self._waypoint_distance(self.current_waypoint_index, rob_xy)
+                >= self.gps_threshold
+            ):
+                return
             why = f"passed intersection (closest {closest:.2f} m)"
         elif self._gps_reason == GPS_REASON_STUCK:
             if self.backend.stuck() or advanced < max(1, self.gps_exit_min_waypoints):
@@ -1447,7 +1438,8 @@ class RoadFollower(Node):
 
     def _buffer_goal(self, lat: float, lon: float, stamp: float):
         """Remember a goal that arrived while the follower was busy, unless it is the goal
-        of the current leg (the start code read again on the way, or at the goal itself)."""
+        of the current leg (the start code read again on the way, or at the goal itself).
+        """
         if (
             self._mission_goal is not None
             and latlon_distance((lat, lon), self._mission_goal)
@@ -1738,14 +1730,16 @@ class RoadFollower(Node):
                         throttle_duration_sec=2.0,
                     )
                 return False
-        if self.road_goal_reject_behind:
-            if pose is not None and is_behind(goal_xy, pose[:2], pose[2]):
-                if not quiet:
-                    self.get_logger().warning(
-                        "Road goal rejected: behind the robot",
-                        throttle_duration_sec=2.0,
-                    )
-                return False
+        if (
+            self.road_goal_reject_behind
+            and pose is not None
+            and is_behind(goal_xy, pose[:2], pose[2])
+        ):
+            if not quiet:
+                self.get_logger().warning(
+                    "Road goal rejected: behind the robot", throttle_duration_sec=2.0
+                )
+            return False
         return True
 
     def _send_road_goal(self, candidate=None):
@@ -1828,7 +1822,9 @@ class RoadFollower(Node):
     def save_waypoint_index(self):
         if not self.gps_path:
             return
-        try:
+        with contextlib.suppress(
+            Exception
+        ):  # a missing index file is not worth a crash
             index_dir = os.path.join(os.path.dirname(self.gps_path), "waypoint_index")
             os.makedirs(index_dir, exist_ok=True)
             path = os.path.join(index_dir, f"{int(time.time())}.txt")
@@ -1837,8 +1833,6 @@ class RoadFollower(Node):
             self.get_logger().info(
                 f"Saved current waypoint index {self.current_waypoint_index} to {path}"
             )
-        except Exception:
-            pass
 
 
 def main(default_mode: str = "road_gps"):

@@ -45,7 +45,7 @@ def load_waypoints(path: str, reverse: bool = False) -> list[dict]:
     """
     points_raw: list[dict] = []
     if path.endswith(".gpx"):
-        with open(path, "r") as f:
+        with open(path) as f:
             gpx = gpxpy.parse(f)
         points = list(gpx.waypoints)
         if not points:
@@ -57,7 +57,7 @@ def load_waypoints(path: str, reverse: bool = False) -> list[dict]:
                 {"lat": wp.latitude, "lon": wp.longitude, "ele": wp.elevation or 0.0}
             )
     elif path.endswith((".yaml", ".yml")):
-        with open(path, "r") as f:
+        with open(path) as f:
             data = yaml.safe_load(f)
         for wp in data.get("waypoints", []):
             points_raw.append(

@@ -3,7 +3,7 @@
 <package format="3">
   <name>robot_mission_planner</name>
   <version>0.0.1</version>
-  <description>Robot Mission Planner</description>
+  <description>Road, GPS and mission following for the Helhest robot</description>
   <maintainer email="kuceral4@fel.cvut.cz">Kucera Ales</maintainer>
   <maintainer email="vlkjan6@fel.cvut.cz">Vlk Jan</maintainer>
   <license>BSD-3-Clause</license>
@@ -42,6 +42,8 @@
   <exec_depend>python3-opencv</exec_depend>  <!-- qr_goal -->
   <exec_depend>python3-utm</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

@@ -25,4 +25,11 @@ def make_backend(kind: str, node, frames, **kwargs) -> Backend:
     raise ValueError(f"unknown nav_backend '{kind}', expected one of {KINDS}")
 
 
-__all__ = ["Backend", "CommanderBackend", "FollowPathBackend", "Nav2Backend", "KINDS", "make_backend"]
+__all__ = [
+    "Backend",
+    "CommanderBackend",
+    "FollowPathBackend",
+    "Nav2Backend",
+    "KINDS",
+    "make_backend",
+]

@@ -3,9 +3,16 @@ import math
 import pytest
 
 from robot_mission_planner.follower.road_goal import (
+    indices_near_polyline,
+    is_arrived,
     is_behind,
+    latlon_distance,
+    nearest_index,
+    passed_along,
     polyline_cumulative,
     project_on_route,
+    remaining_route_length,
+    route_offset_limit,
     route_point_at,
     select_carrot_goal,
     select_path_goal,
@@ -30,7 +37,9 @@ def test_carrot_too_close_is_pushed_out_along_its_bearing():
 
 
 def test_carrot_on_the_robot_uses_robot_heading():
-    g = select_carrot_goal((0.0, 0.0), ROBOT, math.pi / 2, min_ahead=4.0, max_ahead=12.0)
+    g = select_carrot_goal(
+        (0.0, 0.0), ROBOT, math.pi / 2, min_ahead=4.0, max_ahead=12.0
+    )
     assert g == pytest.approx((0.0, 4.0, math.pi / 2))
 
 
@@ -84,21 +93,18 @@ def test_smooth():
 
 
 def test_is_arrived_radius_and_index_guard():
-    from robot_mission_planner.follower.road_goal import is_arrived
-
     wps = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0), (40.0, 0.0)]
     assert is_arrived((38.0, 1.0), wps, 4, radius=5.0)
     assert is_arrived((36.0, 0.0), wps, 2, radius=5.0, index_window=3)
-    assert not is_arrived((36.0, 0.0), wps, 0, radius=5.0, index_window=3)  # index too early
+    assert not is_arrived(
+        (36.0, 0.0), wps, 0, radius=5.0, index_window=3
+    )  # index too early
     assert not is_arrived((30.0, 0.0), wps, 4, radius=5.0)  # 10 m away
     assert not is_arrived((40.0, 0.0), [], 0, radius=5.0)
     assert is_arrived((41.0, 0.0), [None, (40.0, 0.0)], 1, radius=5.0)
 
 
 # ---------------------------------------------------------------- intersection exit / offsets
-from robot_mission_planner.follower.road_goal import nearest_index, passed_along, route_offset_limit  # noqa: E402
-
-
 def test_nearest_index_skips_missing_points():
     pts = [(0.0, 0.0), None, (10.0, 0.0), (20.0, 0.0)]
     assert nearest_index(pts, (11.0, 1.0)) == 2
@@ -121,18 +127,15 @@ def test_passed_along_without_direction_is_true():
 
 
 def test_route_offset_limit_relative_to_robot():
-    assert route_offset_limit(0.5, 5.0, 2.0, 10.0) == 5.0        # robot on the line: base
-    assert route_offset_limit(5.5, 5.0, 2.0, 10.0) == 7.5        # robot off: robot + margin
-    assert route_offset_limit(9.5, 5.0, 2.0, 10.0) == 10.0       # capped
-    assert route_offset_limit(None, 5.0, 2.0, 10.0) == 5.0       # no pose: base
-    assert route_offset_limit(9.5, 5.0, 2.0, 0.0) == 11.5        # no cap
-    assert route_offset_limit(30.0, 12.0, 2.0, 10.0) == 12.0     # cap never below the base
+    assert route_offset_limit(0.5, 5.0, 2.0, 10.0) == 5.0  # robot on the line: base
+    assert route_offset_limit(5.5, 5.0, 2.0, 10.0) == 7.5  # robot off: robot + margin
+    assert route_offset_limit(9.5, 5.0, 2.0, 10.0) == 10.0  # capped
+    assert route_offset_limit(None, 5.0, 2.0, 10.0) == 5.0  # no pose: base
+    assert route_offset_limit(9.5, 5.0, 2.0, 0.0) == 11.5  # no cap
+    assert route_offset_limit(30.0, 12.0, 2.0, 10.0) == 12.0  # cap never below the base
 
 
 # ---------------------------------------------------------------- final approach
-from robot_mission_planner.follower.road_goal import remaining_route_length  # noqa: E402
-
-
 def test_remaining_route_length_counts_robot_and_segments():
     wps = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0)]
     # 3 m before waypoint 1, then 10 + 10 m of route left
@@ -147,7 +150,9 @@ def test_remaining_route_length_counts_robot_and_segments():
 def test_remaining_route_length_skips_missing_and_clamps_the_index():
     wps = [(0.0, 0.0), None, (20.0, 0.0)]
     assert remaining_route_length((0.0, 0.0), wps, 0) == pytest.approx(20.0)
-    assert remaining_route_length((0.0, 0.0), wps, 99) == pytest.approx(20.0)  # index clamped
+    assert remaining_route_length((0.0, 0.0), wps, 99) == pytest.approx(
+        20.0
+    )  # index clamped
     assert remaining_route_length((0.0, 0.0), wps, -5) == pytest.approx(20.0)
 
 
@@ -157,13 +162,12 @@ def test_remaining_route_length_without_a_usable_route_is_infinite():
 
 
 # ---------------------------------------------------------------- QR goal distance
-from robot_mission_planner.follower.road_goal import latlon_distance  # noqa: E402
-
-
 def test_latlon_distance_metres():
     assert latlon_distance((50.11, 14.41), (50.11, 14.41)) == pytest.approx(0.0)
     # 0.001 deg of latitude is ~111.3 m anywhere
-    assert latlon_distance((50.11, 14.41), (50.111, 14.41)) == pytest.approx(111.32, abs=0.5)
+    assert latlon_distance((50.11, 14.41), (50.111, 14.41)) == pytest.approx(
+        111.32, abs=0.5
+    )
     # the same step in longitude is shorter by cos(lat) at 50 deg
     assert latlon_distance((50.11, 14.41), (50.11, 14.411)) == pytest.approx(
         111.32 * math.cos(math.radians(50.11)), abs=0.5
@@ -173,17 +177,14 @@ def test_latlon_distance_metres():
 
 
 # ---------------------------------------------------------------- ring pruning (P4)
-from robot_mission_planner.follower.road_goal import indices_near_polyline  # noqa: E402
-
-
 def test_indices_near_polyline_keeps_only_the_rings_on_the_route():
     # Route east along y = 0, then north at (20, 0).
     route = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 10.0)]
     rings = [
-        (5.0, 1.0),    # on the route
-        (12.0, 8.0),   # a side junction 8 m off it
-        (20.0, 0.0),   # the corner node itself
-        (23.5, 5.0),   # 3.5 m off the northbound leg
+        (5.0, 1.0),  # on the route
+        (12.0, 8.0),  # a side junction 8 m off it
+        (20.0, 0.0),  # the corner node itself
+        (23.5, 5.0),  # 3.5 m off the northbound leg
         (20.0, 12.0),  # 2 m past the end of the route
     ]
     assert indices_near_polyline(rings, route, 3.0) == [0, 2, 4]
@@ -225,7 +226,7 @@ def route_goal(carrot, robot, points=STRAIGHT, cum=STRAIGHT_CUM, index=0, **kw):
 
 def test_project_on_route_gives_arclength_and_signed_offset():
     s, n = project_on_route(STRAIGHT, STRAIGHT_CUM, (7.0, 2.0))
-    assert (s, n) == pytest.approx((7.0, 2.0))          # 2 m to the left of an eastward route
+    assert (s, n) == pytest.approx((7.0, 2.0))  # 2 m to the left of an eastward route
     s, n = project_on_route(STRAIGHT, STRAIGHT_CUM, (7.0, -2.0))
     assert (s, n) == pytest.approx((7.0, -2.0))
 
@@ -236,7 +237,9 @@ def test_project_on_route_window_keeps_the_current_leg():
     pts = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 4.0), (10.0, 4.0), (0.0, 4.0)]
     cum = polyline_cumulative(pts)
     assert project_on_route(pts, cum, (10.0, 3.0))[0] == pytest.approx(cum[4])
-    assert project_on_route(pts, cum, (10.0, 3.0), index=1, window=1)[0] == pytest.approx(10.0)
+    assert project_on_route(pts, cum, (10.0, 3.0), index=1, window=1)[
+        0
+    ] == pytest.approx(10.0)
 
 
 def test_route_point_at_extrapolates_past_the_ends():
@@ -258,23 +261,34 @@ def test_carrot_offset_is_carried_to_the_stretched_goal():
 
 
 def test_goal_follows_the_corner_instead_of_the_robot_heading():
-    g = route_goal((9.0, 0.0), (9.0, 0.0), points=CORNER, cum=CORNER_CUM, index=1, max_turn=0.0)
+    g = route_goal(
+        (9.0, 0.0), (9.0, 0.0), points=CORNER, cum=CORNER_CUM, index=1, max_turn=0.0
+    )
     assert g == pytest.approx((12.0, 3.0, math.pi / 2))
 
 
 def test_corner_clamp_stops_the_stretch_at_a_sharp_turn():
     g = route_goal(
-        (9.0, 0.0), (5.0, 0.0), points=CORNER, cum=CORNER_CUM, index=1,
-        max_turn=math.radians(45), min_ahead=4.0,
+        (9.0, 0.0),
+        (5.0, 0.0),
+        points=CORNER,
+        cum=CORNER_CUM,
+        index=1,
+        max_turn=math.radians(45),
+        min_ahead=4.0,
     )
-    assert g == pytest.approx((12.0, 0.0, 0.0))          # stopped at the corner vertex
+    assert g == pytest.approx((12.0, 0.0, 0.0))  # stopped at the corner vertex
 
 
 def test_min_ahead_wins_over_the_corner_clamp():
     # Standing on the corner: clamping would give a goal inside the commander's arrival box,
     # so the goal is pushed on around the corner instead.
     g = route_goal(
-        (11.0, 0.0), (11.0, 0.0), points=CORNER, cum=CORNER_CUM, index=2,
+        (11.0, 0.0),
+        (11.0, 0.0),
+        points=CORNER,
+        cum=CORNER_CUM,
+        index=2,
         max_turn=math.radians(45),
     )
     assert math.hypot(g[0] - 11.0, g[1]) >= 4.0 - 1e-6

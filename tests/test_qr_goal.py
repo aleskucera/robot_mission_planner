@@ -57,7 +57,9 @@ def test_debouncer_confirms_after_consecutive_frames():
     assert d.observe(["geo:1,2"], now=1.0) == []  # already published
     assert d.observe([], now=1.5) == []  # streak broken
     assert d.observe(["geo:1,2"], now=2.0) == []  # needs two frames again ...
-    assert d.observe(["geo:1,2"], now=2.5) == []  # ... but still within republish window
+    assert (
+        d.observe(["geo:1,2"], now=2.5) == []
+    )  # ... but still within republish window
     assert d.observe(["geo:1,2"], now=31.0) == ["geo:1,2"]  # republished after 30 s
 
 
@@ -77,7 +79,9 @@ def _render_qr(text: str, size: int = 400, border: int = 40) -> np.ndarray:
         pytest.skip("cv2.QRCodeEncoder not available")
     code = cv2.QRCodeEncoder.create().encode(text)
     big = cv2.resize(code, (size, size), interpolation=cv2.INTER_NEAREST)
-    padded = cv2.copyMakeBorder(big, border, border, border, border, cv2.BORDER_CONSTANT, value=255)
+    padded = cv2.copyMakeBorder(
+        big, border, border, border, border, cv2.BORDER_CONSTANT, value=255
+    )
     return cv2.cvtColor(padded, cv2.COLOR_GRAY2BGR)
 
 

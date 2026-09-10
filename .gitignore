@@ -1,5 +1,9 @@
-*.pyc
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 .DS_Store
-*.tif
-data/*
-precomputed_tiles/
+
+# Runtime dump: the follower writes the waypoint index it stopped at next to the route file.
+data/waypoint_index/

@@ -35,6 +35,7 @@ Run inside the container: ``bash demo/run_sm_test.sh`` (or pytest directly, with
 host-side ``pytest src/robot_mission_planner`` stays green.
 """
 
+import contextlib
 import json
 import math
 import os
@@ -46,7 +47,9 @@ from pathlib import Path
 
 import pytest
 
-rclpy = pytest.importorskip("rclpy", reason="ROS 2 (rclpy) is only available in the container")
+rclpy = pytest.importorskip(
+    "rclpy", reason="ROS 2 (rclpy) is only available in the container"
+)
 
 from geographic_msgs.msg import GeoPointStamped  # noqa: E402
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped  # noqa: E402
@@ -65,8 +68,19 @@ CONFIG = PKG / "config" / "follower.yaml"
 MAP_FRAME = "FP_ENU0"
 EARTH_FRAME = "FP_ECEF"
 # One domain per scenario: the tests must not see each other, nor a bag replay on domain 0.
-DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49, "h": 50,
-          "i": 51, "j": 52}
+DOMAIN = {
+    "a": 42,
+    "b": 43,
+    "c": 44,
+    "d": 45,
+    "e": 46,
+    "f0": 47,
+    "f1": 48,
+    "g": 49,
+    "h": 50,
+    "i": 51,
+    "j": 52,
+}
 SPEED = 3.0  # m/s of the simulated robot: keeps a 40 m scenario inside ~20 s
 
 pytestmark = pytest.mark.skipif(
@@ -87,10 +101,10 @@ def quat_matrix(q):
 
 def enu_to_ecef_transform():
     """(R, t) of the FP_ECEF -> FP_ENU0 transform the fake commander broadcasts."""
+    with open(STATIC_TF) as f:
+        transforms = json.load(f)
     entry = next(
-        e
-        for e in json.load(open(STATIC_TF))
-        if e["parent"] == EARTH_FRAME and e["child"] == MAP_FRAME
+        e for e in transforms if e["parent"] == EARTH_FRAME and e["child"] == MAP_FRAME
     )
     return quat_matrix(entry["q"]), entry["t"]
 
@@ -98,7 +112,10 @@ def enu_to_ecef_transform():
 def enu_to_latlon(xy, transform):
     """A point of our synthetic map-frame route as WGS84 (what a GPX/route carries)."""
     r, t = transform
-    x, y, z = (sum(r[i][k] * v for k, v in enumerate((xy[0], xy[1], 0.0))) + t[i] for i in range(3))
+    x, y, z = (
+        sum(r[i][k] * v for k, v in enumerate((xy[0], xy[1], 0.0))) + t[i]
+        for i in range(3)
+    )
     a, f = 6378137.0, 1.0 / 298.257223563
     b, e2 = a * (1 - f), f * (2 - f)
     ep2 = (a * a - b * b) / (b * b)
@@ -124,7 +141,9 @@ def write_gpx(path, route_enu, transform):
         f'<wpt lat="{lat:.9f}" lon="{lon:.9f}"><ele>0</ele><name>wp{i}</name></wpt>\n'
         for i, (lat, lon) in enumerate(enu_to_latlon(p, transform) for p in route_enu)
     )
-    path.write_text(f'<?xml version="1.0"?>\n<gpx version="1.1" creator="test">\n{body}</gpx>\n')
+    path.write_text(
+        f'<?xml version="1.0"?>\n<gpx version="1.1" creator="test">\n{body}</gpx>\n'
+    )
     return path
 
 
@@ -134,7 +153,11 @@ def point_ahead(route, xy, ahead):
     for i, (a, b) in enumerate(zip(route, route[1:])):
         vx, vy = b[0] - a[0], b[1] - a[1]
         den = vx * vx + vy * vy
-        t = 0.0 if den == 0 else max(0.0, min(1.0, ((xy[0] - a[0]) * vx + (xy[1] - a[1]) * vy) / den))
+        t = (
+            0.0
+            if den == 0
+            else max(0.0, min(1.0, ((xy[0] - a[0]) * vx + (xy[1] - a[1]) * vy) / den))
+        )
         d = math.hypot(a[0] + vx * t - xy[0], a[1] + vy * t - xy[1])
         if d < best_d:
             best_i, best_t, best_d = i, t, d
@@ -157,7 +180,9 @@ def point_ahead(route, xy, ahead):
 class Observer(Node):
     """Everything the follower needs that is neither the commander nor the route file."""
 
-    def __init__(self, context, route, intersections=(), carrot_ahead=6.0, carrot_lateral=0.0):
+    def __init__(
+        self, context, route, intersections=(), carrot_ahead=6.0, carrot_lateral=0.0
+    ):
         super().__init__("sm_observer", context=context)
         self.route = list(route)
         self.states, self.events, self.poses, self.status = [], [], [], []
@@ -167,10 +192,14 @@ class Observer(Node):
         latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         history = QoSProfile(depth=200, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(String, "/road_follower/state", self._state_cb, 10)
-        self.create_subscription(String, "/road_follower/event", self._event_cb, history)
+        self.create_subscription(
+            String, "/road_follower/event", self._event_cb, history
+        )
         self.create_subscription(String, "/fake_commander/status", self._status_cb, 10)
         self.create_subscription(PoseStamped, "/fake_commander/pose", self._pose_cb, 10)
-        self.create_subscription(PoseStamped, "/goal_waypoint", self._road_goal_cb, history)
+        self.create_subscription(
+            PoseStamped, "/goal_waypoint", self._road_goal_cb, history
+        )
         self.pub_carrot = self.create_publisher(Marker, "/cloud_hull_center_marker", 10)
         self.pub_inter = self.create_publisher(PoseArray, "/intersections", latched)
         self.pub_qr = self.create_publisher(GeoPointStamped, "/qr_goal/goal", latched)
@@ -199,7 +228,9 @@ class Observer(Node):
         self.poses.append((round(self.t(), 1),) + self.pose)
 
     def _road_goal_cb(self, msg):
-        self.road_goals.append((round(self.t(), 1), msg.pose.position.x, msg.pose.position.y))
+        self.road_goals.append(
+            (round(self.t(), 1), msg.pose.position.x, msg.pose.position.y)
+        )
 
     # ---- stimuli
     def _publish_intersections(self, points):
@@ -224,7 +255,10 @@ class Observer(Node):
             dx, dy = nx - x, ny - y
             d = math.hypot(dx, dy)
             if d > 1e-6:
-                x, y = x - self.carrot_lateral * dy / d, y + self.carrot_lateral * dx / d
+                x, y = (
+                    x - self.carrot_lateral * dy / d,
+                    y + self.carrot_lateral * dx / d,
+                )
         m = Marker()
         m.header.frame_id = MAP_FRAME
         m.header.stamp = self.get_clock().now().to_msg()
@@ -265,7 +299,9 @@ class PlanRouteServer:
         self.route_latlon = route_latlon
         self.fail_reason = fail_reason
         self.calls = 0
-        self.server = ActionServer(node, PlanRoute, "/route_planner/plan_route", self._execute)
+        self.server = ActionServer(
+            node, PlanRoute, "/route_planner/plan_route", self._execute
+        )
 
     def _execute(self, goal_handle):
         from geographic_msgs.msg import GeoPoseStamped
@@ -293,9 +329,20 @@ class PlanRouteServer:
 class Rig:
     """Fake commander + follower subprocesses and an in-process observer, on one domain."""
 
-    def __init__(self, domain, route, tmp_path, fake_env=None, follower_params=None,
-                 intersections=(), start_follower=True, plan_route=None, mission=False,
-                 carrot_ahead=6.0, carrot_lateral=0.0):
+    def __init__(
+        self,
+        domain,
+        route,
+        tmp_path,
+        fake_env=None,
+        follower_params=None,
+        intersections=(),
+        start_follower=True,
+        plan_route=None,
+        mission=False,
+        carrot_ahead=6.0,
+        carrot_lateral=0.0,
+    ):
         self.domain = domain
         self.procs = []
         self.log_dir = tmp_path
@@ -325,9 +372,12 @@ class Rig:
         # that fails every request with that reason.
         self.plan_route = (
             PlanRouteServer(
-                self.observer, self.route_latlon,
+                self.observer,
+                self.route_latlon,
                 fail_reason=plan_route if isinstance(plan_route, str) else None,
-            ) if plan_route else None
+            )
+            if plan_route
+            else None
         )
         self.spin(1.0)
 
@@ -344,19 +394,31 @@ class Rig:
         full.update(env)
         full["ROS_DOMAIN_ID"] = str(self.domain)
         full["ROS_AUTOMATIC_DISCOVERY_RANGE"] = "LOCALHOST"
-        out = open(self.log_dir / log, "w")
+        out = open(self.log_dir / log, "w")  # noqa: SIM115 (the subprocess owns it)
         # Own process group: "ros2 run" does not forward SIGINT to the node it spawns, so
         # signalling the wrapper alone leaves an orphaned follower publishing latched goals
         # into the next test's domain.
         proc = subprocess.Popen(
-            cmd, env=full, stdout=out, stderr=subprocess.STDOUT, cwd=str(WS), start_new_session=True
+            cmd,
+            env=full,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            cwd=str(WS),
+            start_new_session=True,
         )
         self.procs.append(proc)
         return proc
 
     def start_follower(self, params):
-        args = ["ros2", "run", "robot_mission_planner", "road_follower", "--ros-args",
-                "--params-file", str(CONFIG)]
+        args = [
+            "ros2",
+            "run",
+            "robot_mission_planner",
+            "road_follower",
+            "--ros-args",
+            "--params-file",
+            str(CONFIG),
+        ]
         for k, v in params.items():
             args += ["-p", f"{k}:={v}"]
         self.follower = self._spawn(args, {}, "follower.log")
@@ -368,16 +430,12 @@ class Rig:
             if not alive:
                 break
             for p in alive:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(os.getpgid(p.pid), sig)
-                except ProcessLookupError:
-                    pass
             deadline = time.time() + grace
             for p in alive:
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     p.wait(timeout=max(0.1, deadline - time.time()))
-                except subprocess.TimeoutExpired:
-                    pass
         self.executor.remove_node(self.observer)
         self.observer.destroy_node()
         rclpy.shutdown(context=self.context)
@@ -397,15 +455,19 @@ class Rig:
         return False
 
     def require(self, predicate, timeout, what):
-        assert self.wait_for(predicate, timeout, what), (
-            f"timed out after {timeout} s waiting for {what}\n{self.report()}"
-        )
+        assert self.wait_for(
+            predicate, timeout, what
+        ), f"timed out after {timeout} s waiting for {what}\n{self.report()}"
 
     # ---- the fake commander's own record
     def fake_events(self):
         if not self.events_path.exists():
             return []
-        return [json.loads(line) for line in self.events_path.read_text().splitlines() if line.strip()]
+        return [
+            json.loads(line)
+            for line in self.events_path.read_text().splitlines()
+            if line.strip()
+        ]
 
     def calls(self):
         """The service calls the follower made, in order: ('switch_mode', 'sequence'), ..."""
@@ -444,11 +506,16 @@ def rig(tmp_path):
 
 def wait_state(rig_, prefix, timeout, after=0):
     """Wait until the follower's state (index >= ``after``) starts with ``prefix``."""
+
     def hit():
         return any(s.startswith(prefix) for _, s, _ in rig_.observer.states[after:])
 
     rig_.require(hit, timeout, f"follower state {prefix}*")
-    return next(i for i, (_, s, _) in enumerate(rig_.observer.states) if i >= after and s.startswith(prefix))
+    return next(
+        i
+        for i, (_, s, _) in enumerate(rig_.observer.states)
+        if i >= after and s.startswith(prefix)
+    )
 
 
 # --------------------------------------------------------------------------- scenarios
@@ -459,6 +526,7 @@ def gps_episode(r, node, radius=9.0):
     carries the robot pose), so it needs no clock alignment with the follower and ignores
     any other GPS episode of the run.
     """
+
     def near(e):
         p = e.get("pose")
         return p is not None and math.hypot(p[0] - node[0], p[1] - node[1]) <= radius
@@ -470,24 +538,36 @@ def gps_episode(r, node, radius=9.0):
     while True:
         ev = r.fake_events()
         i_seq = next(
-            (i for i, e in enumerate(ev)
-             if e["event"] == "switch_mode" and e["mode"] == "sequence" and near(e)),
+            (
+                i
+                for i, e in enumerate(ev)
+                if e["event"] == "switch_mode" and e["mode"] == "sequence" and near(e)
+            ),
             None,
         )
         i_end = None
         if i_seq is not None:
             i_end = next(
-                (i for i in range(i_seq + 1, len(ev))
-                 if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"),
+                (
+                    i
+                    for i in range(i_seq + 1, len(ev))
+                    if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"
+                ),
                 None,
             )
         if i_end is not None or time.time() > deadline:
             break
         time.sleep(0.2)
     assert i_seq is not None, f"no sequence switch near {node}\n{r.report()}"
-    assert i_end is not None, f"no goto switch after the sequence near {node}\n{r.report()}"
+    assert (
+        i_end is not None
+    ), f"no goto switch after the sequence near {node}\n{r.report()}"
     i_start = max(
-        (i for i in range(i_seq) if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"),
+        (
+            i
+            for i in range(i_seq)
+            if ev[i]["event"] == "switch_mode" and ev[i]["mode"] == "goto"
+        ),
         default=0,
     )
     return ev[i_start : i_end + 1]
@@ -499,7 +579,11 @@ def distance_to_route(route, xy):
     for a, b in zip(route, route[1:]):
         vx, vy = b[0] - a[0], b[1] - a[1]
         den = vx * vx + vy * vy
-        t = 0.0 if den == 0 else max(0.0, min(1.0, ((xy[0] - a[0]) * vx + (xy[1] - a[1]) * vy) / den))
+        t = (
+            0.0
+            if den == 0
+            else max(0.0, min(1.0, ((xy[0] - a[0]) * vx + (xy[1] - a[1]) * vy) / den))
+        )
         best = min(best, math.hypot(a[0] + vx * t - xy[0], a[1] + vy * t - xy[1]))
     return best
 
@@ -530,10 +614,15 @@ def test_a_straight_route_one_ring_without_stopping(rig):
     t_gps, t_back = r.observer.states[i_gps][0], r.observer.states[i_back][0]
     window = call_kinds(gps_episode(r, (24.0, 0.0)))
     # F1: the hand-over is goto <-> sequence directly; a STOP here costs seconds per ring.
-    assert ("switch_mode", "stop") not in window, f"STOP in the hand-over: {window}\n{r.report()}"
+    assert (
+        "switch_mode",
+        "stop",
+    ) not in window, f"STOP in the hand-over: {window}\n{r.report()}"
     assert window[0] == ("switch_mode", "goto"), window
     # F2: one whole-route sequence per GPS entry, not one per 10-waypoint window.
-    assert sum(1 for k in window if k[0] == "goal_sequence") == 1, f"{window}\n{r.report()}"
+    assert (
+        sum(1 for k in window if k[0] == "goal_sequence") == 1
+    ), f"{window}\n{r.report()}"
     # S2: the source is configured before every sequence, not once per process.
     assert sum(1 for k in window if k[0] == "configure_sequence_mode") == 1, window
     assert t_back - t_gps < 30, "spent too long at one ring"
@@ -566,20 +655,31 @@ def test_c_commander_restart_mid_gps_is_recovered(rig):
     r = rig(
         domain=DOMAIN["c"],
         route=route,
-        intersections=[(0.0, 0.0)],  # in the ring from the first tick: the whole run is GPS
+        intersections=[
+            (0.0, 0.0)
+        ],  # in the ring from the first tick: the whole run is GPS
         fake_env={"FAKE_RESTART_AT": "20", "FAKE_SPEED": "1.5"},
         # Stay in GPS for the whole scenario so the restart cannot land in ROAD mode.
-        follower_params={"intersection_enter_threshold": 8.0, "intersection_exit_threshold": 200.0},
+        follower_params={
+            "intersection_enter_threshold": 8.0,
+            "intersection_exit_threshold": 200.0,
+        },
     )
     wait_state(r, "GPS:intersection", 30)
-    r.require(lambda: any(e["event"] == "restart" for e in r.fake_events()), 40, "the fake restart")
+    r.require(
+        lambda: any(e["event"] == "restart" for e in r.fake_events()),
+        40,
+        "the fake restart",
+    )
     t_restart = next(e["t"] for e in r.fake_events() if e["event"] == "restart")
     x_restart = r.observer.pose[0]
 
     # The follower must notice the state-topic gap, re-send configure(topic) + the sequence.
     r.require(
         lambda: any(
-            e["event"] == "sequence_loaded" and e["source"] == "topic" and e["t"] > t_restart
+            e["event"] == "sequence_loaded"
+            and e["source"] == "topic"
+            and e["t"] > t_restart
             for e in r.fake_events()
         ),
         40,
@@ -587,21 +687,35 @@ def test_c_commander_restart_mid_gps_is_recovered(rig):
     )
     events = r.fake_events()
     reconfig = next(
-        e for e in events
-        if e["event"] == "configure_sequence_mode" and e["source"] == "topic" and e["t"] > t_restart
+        e
+        for e in events
+        if e["event"] == "configure_sequence_mode"
+        and e["source"] == "topic"
+        and e["t"] > t_restart
     )
     reloaded = next(
-        e for e in events
-        if e["event"] == "sequence_loaded" and e["source"] == "topic" and e["t"] > t_restart
+        e
+        for e in events
+        if e["event"] == "sequence_loaded"
+        and e["source"] == "topic"
+        and e["t"] > t_restart
     )
-    gpx_errors = [e["t"] for e in events if e["event"] == "gpx_source_error" and e["t"] > t_restart]
+    gpx_errors = [
+        e["t"]
+        for e in events
+        if e["event"] == "gpx_source_error" and e["t"] > t_restart
+    ]
     if gpx_errors:
-        assert reloaded["t"] - gpx_errors[0] < 10.0, (
-            f"stuck on the gpx sequence source for {reloaded['t'] - gpx_errors[0]:.0f} s\n{r.report()}"
-        )
+        assert (
+            reloaded["t"] - gpx_errors[0] < 10.0
+        ), f"stuck on the gpx sequence source for {reloaded['t'] - gpx_errors[0]:.0f} s\n{r.report()}"
     assert reconfig["t"] < reloaded["t"]
-    assert any(e["event"] == "goal_sequence" and e["t"] > t_restart for e in events), r.report()
-    r.require(lambda: r.observer.pose[0] > x_restart + 5.0, 30, "the robot to drive again")
+    assert any(
+        e["event"] == "goal_sequence" and e["t"] > t_restart for e in events
+    ), r.report()
+    r.require(
+        lambda: r.observer.pose[0] > x_restart + 5.0, 30, "the robot to drive again"
+    )
 
 
 def test_d_stale_latched_qr_goal_is_ignored(rig):
@@ -613,11 +727,19 @@ def test_d_stale_latched_qr_goal_is_ignored(rig):
     r.spin(1.0)
     r.start_follower({})
 
-    r.require(lambda: r.observer.state_text() is not None, 30, "the follower to publish a state")
+    r.require(
+        lambda: r.observer.state_text() is not None,
+        30,
+        "the follower to publish a state",
+    )
     r.spin(12.0)
     assert set(r.observer.state_names()) == {"IDLE"}, r.report()
-    assert not [e for _, e in r.observer.events if e.startswith(("GOAL", "PLANNING", "ROUTE"))], r.report()
-    assert not [c for c in r.calls() if c[1] != "switch_mode" or c[2] != "stop"], r.report()
+    assert not [
+        e for _, e in r.observer.events if e.startswith(("GOAL", "PLANNING", "ROUTE"))
+    ], r.report()
+    assert not [
+        c for c in r.calls() if c[1] != "switch_mode" or c[2] != "stop"
+    ], r.report()
 
 
 def test_e_arrival_stops_the_commander(rig):
@@ -640,14 +762,22 @@ def test_e_arrival_stops_the_commander(rig):
     i_arrived = wait_state(r, "ARRIVED", 60)
     wait_state(r, "IDLE", 20, after=i_arrived + 1)
     assert r.plan_route.calls == 1
-    r.require(lambda: any(e.startswith("IDLE") for _, e in r.observer.events), 10, "the IDLE event")
+    r.require(
+        lambda: any(e.startswith("IDLE") for _, e in r.observer.events),
+        10,
+        "the IDLE event",
+    )
     # The mission events in order; the node may publish others in between (HOME, FIX, ...).
     names = [e.split(":")[0] for _, e in r.observer.events]
     expected = ["GOAL", "PLANNING", "ROUTE", "START", "ARRIVED", "IDLE"]
     it = iter(names)
-    assert all(any(n == want for n in it) for want in expected), f"{names}\n{r.report()}"
+    assert all(
+        any(n == want for n in it) for want in expected
+    ), f"{names}\n{r.report()}"
     r.require(
-        lambda: r.observer.status and r.observer.status[-1]["mode"] == "STOP", 15, "commander STOP"
+        lambda: r.observer.status and r.observer.status[-1]["mode"] == "STOP",
+        15,
+        "commander STOP",
     )
     assert r.observer.pose[0] > 30.0, r.report()
 
@@ -689,8 +819,14 @@ def test_f_sequence_waypoint_inside_the_arrival_box(rig, nearby_fix):
     latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(PoseArray, "/goal_sequence", latched)
     switch = node.create_client(SwitchMode, "/crl_commander/switch_mode")
-    configure = node.create_client(ConfigureSequenceMode, "/crl_commander/configure_sequence_mode")
-    r.require(lambda: switch.service_is_ready() and configure.service_is_ready(), 20, "the services")
+    configure = node.create_client(
+        ConfigureSequenceMode, "/crl_commander/configure_sequence_mode"
+    )
+    r.require(
+        lambda: switch.service_is_ready() and configure.service_is_ready(),
+        20,
+        "the services",
+    )
 
     seq = PoseArray()
     seq.header.frame_id = EARTH_FRAME
@@ -698,7 +834,8 @@ def test_f_sequence_waypoint_inside_the_arrival_box(rig, nearby_fix):
     for x, y in route:
         p = Pose()
         p.position.x, p.position.y, p.position.z = (
-            sum(rot[i][k] * v for k, v in enumerate((x, y, 0.0))) + trans[i] for i in range(3)
+            sum(rot[i][k] * v for k, v in enumerate((x, y, 0.0))) + trans[i]
+            for i in range(3)
         )
         p.orientation.w = 1.0
         seq.poses.append(p)
@@ -710,11 +847,20 @@ def test_f_sequence_waypoint_inside_the_arrival_box(rig, nearby_fix):
     req.mode = "sequence"
     switch.call_async(req)
 
-    r.require(lambda: any(e["event"] == "sequence_loaded" for e in r.fake_events()), 20, "the sequence")
-    assert next(e for e in r.fake_events() if e["event"] == "sequence_loaded")["start"] == 1
+    r.require(
+        lambda: any(e["event"] == "sequence_loaded" for e in r.fake_events()),
+        20,
+        "the sequence",
+    )
+    assert (
+        next(e for e in r.fake_events() if e["event"] == "sequence_loaded")["start"]
+        == 1
+    )
     # With the fix the commander is past the nearby waypoint and driving within a second or
     # two; without it, it consumes waypoint 1 forever and the robot never moves.
-    moved = r.wait_for(lambda: r.observer.pose is not None and r.observer.pose[0] > 5.0, 8)
+    moved = r.wait_for(
+        lambda: r.observer.pose is not None and r.observer.pose[0] > 5.0, 8
+    )
     consumed = [e for e in r.fake_events() if e["event"] == "goal_consumed"]
     indices = [s["seq_index"] for s in r.observer.status]
     assert moved, (
@@ -774,19 +920,26 @@ def test_h_route_source_drives_a_bend_with_a_lagging_carrot(rig):
     # the end of the drive is the robot itself reaching the last waypoint.
     r.require(
         lambda: r.observer.pose is not None
-        and math.hypot(r.observer.pose[0] - route[-1][0], r.observer.pose[1] - route[-1][1]) < 4.0,
+        and math.hypot(
+            r.observer.pose[0] - route[-1][0], r.observer.pose[1] - route[-1][1]
+        )
+        < 4.0,
         90,
         "the robot at the end of the route",
     )
 
-    assert not any(s.startswith("GPS:no_road") for s in r.observer.state_names()), r.report()
+    assert not any(
+        s.startswith("GPS:no_road") for s in r.observer.state_names()
+    ), r.report()
     goals = r.observer.road_goals
     assert len(goals) >= 5, f"only {len(goals)} road goals\n{r.report()}"
     offsets = sorted(distance_to_route(route, (x, y)) for _, x, y in goals)
     median = offsets[len(offsets) // 2]
     # The carrot's own 2 m offset, carried over; never pulled back onto the mapped line and
     # never thrown off it by the bend.
-    assert 1.0 <= median <= 3.0, f"median goal offset {median:.1f} m\n{offsets}\n{r.report()}"
+    assert (
+        1.0 <= median <= 3.0
+    ), f"median goal offset {median:.1f} m\n{offsets}\n{r.report()}"
     assert offsets[-1] <= 4.0, f"a goal {offsets[-1]:.1f} m off the route\n{r.report()}"
     # The bend was driven from the route's shape: goals appear on the northbound leg.
     assert any(y > 2.0 and x > 25.0 for _, x, y in goals), f"{goals}\n{r.report()}"
@@ -814,7 +967,9 @@ def test_i_mode_gps_drives_the_route_without_the_road(rig):
 def test_j_mode_road_drives_without_a_route(rig):
     """mode: road -- carrots only, no route to load, no GPS state to fall back to."""
     route = densify([(0, 0), (40, 0)])  # the shape of the road, known to the test only
-    r = rig(domain=DOMAIN["j"], route=route, mission=True, follower_params={"mode": "road"})
+    r = rig(
+        domain=DOMAIN["j"], route=route, mission=True, follower_params={"mode": "road"}
+    )
     wait_state(r, "ROAD", 30)
     r.require(
         lambda: r.observer.pose is not None and r.observer.pose[0] > 20.0,
@@ -826,5 +981,7 @@ def test_j_mode_road_drives_without_a_route(rig):
     assert set(names) == {"ROAD"}, f"{names}\n{r.report()}"
     kinds = call_kinds(r.fake_events())
     assert ("switch_mode", "goto") in kinds, kinds
-    assert not [k for k in kinds if k[0] == "goal_sequence"], f"a sequence in mode road: {kinds}"
+    assert not [
+        k for k in kinds if k[0] == "goal_sequence"
+    ], f"a sequence in mode road: {kinds}"
     assert len(r.observer.road_goals) >= 5, r.report()
