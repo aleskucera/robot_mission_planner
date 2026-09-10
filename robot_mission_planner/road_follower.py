@@ -259,6 +259,9 @@ class RoadFollower(Node):
         self.declare_parameter("plan_spacing", 3.0)  # m between route waypoints (0 = planner default)
         self.declare_parameter("plan_retries", 3)  # attempts before giving up on a goal
         self.declare_parameter("plan_retry_delay", 5.0)  # s between attempts
+        # PlanRoute failure reasons that will not change on a retry (the goal is too far
+        # from any way): give up on the goal at once instead of plan_retries attempts.
+        self.declare_parameter("plan_no_retry_reasons", ["snap_too_far"])
         self.declare_parameter("plan_timeout", 60.0)  # s for one attempt (server + planning)
         self.declare_parameter("start_delay", 5.0)  # s between route received and first command
         self.declare_parameter("goal_reached_radius", 5.0)  # m to the last waypoint = arrived
@@ -337,6 +340,7 @@ class RoadFollower(Node):
         self.plan_spacing = float(gp("plan_spacing"))
         self.plan_retries = int(gp("plan_retries"))
         self.plan_retry_delay = float(gp("plan_retry_delay"))
+        self.plan_no_retry_reasons = {str(r) for r in (gp("plan_no_retry_reasons") or []) if r}
         self.plan_timeout = float(gp("plan_timeout"))
         self.start_delay = float(gp("start_delay"))
         self.goal_reached_radius = float(gp("goal_reached_radius"))
@@ -1429,7 +1433,7 @@ class RoadFollower(Node):
             self._plan_failed(f"result failed: {e}")
             return
         if not result.success:
-            self._plan_failed(f"{result.reason or 'failed'}: {result.message}")
+            self._plan_failed(f"{result.reason or 'failed'}: {result.message}", reason=result.reason)
             return
         points = [
             {"lat": gp.pose.position.latitude, "lon": gp.pose.position.longitude, "ele": 0.0}
@@ -1447,12 +1451,22 @@ class RoadFollower(Node):
         )
         self._one_shot(self.start_delay, self._start_following)
 
-    def _plan_failed(self, why: str):
+    def _plan_failed(self, why: str, reason: str = ""):
+        """
+        A PlanRoute attempt failed: retry after plan_retry_delay, or give up on the goal.
+
+        ``reason`` is the action's failure reason; one listed in plan_no_retry_reasons
+        (snap_too_far: the goal is farther from any way than route_planner's
+        goal_max_snap_distance) will not change on a retry and ends the goal at once.
+        """
         if self.state != self.STATE_PLANNING:
             return
         self._cancel_plan_timer()
         self._plan_goal_handle = None
-        if self._plan_attempt < self.plan_retries:
+        final = reason in self.plan_no_retry_reasons
+        if final:
+            self.get_logger().warning(f"Route planning failed ({why}): not retrying, the goal is unusable")
+        if self._plan_attempt < self.plan_retries and not final:
             self.get_logger().warning(
                 f"Route planning failed ({why}); retrying in {self.plan_retry_delay:.0f} s"
             )

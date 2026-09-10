@@ -58,7 +58,7 @@ CONFIG = PKG / "config" / "road_and_gps_follower.yaml"
 MAP_FRAME = "FP_ENU0"
 EARTH_FRAME = "FP_ECEF"
 # One domain per scenario: the tests must not see each other, nor a bag replay on domain 0.
-DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48}
+DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49}
 SPEED = 3.0  # m/s of the simulated robot: keeps a 40 m scenario inside ~20 s
 
 pytestmark = pytest.mark.skipif(
@@ -230,14 +230,18 @@ class Observer(Node):
 
 
 class PlanRouteServer:
-    """Minimal stand-in for map_data's route_planner: hands back a fixed route."""
+    """
+    Minimal stand-in for map_data's route_planner: hands back a fixed route, or fails
+    every request with ``fail_reason`` (e.g. "snap_too_far") like the real node does.
+    """
 
-    def __init__(self, node, route_latlon):
+    def __init__(self, node, route_latlon, fail_reason=None):
         from map_data_interfaces.action import PlanRoute
         from rclpy.action import ActionServer
 
         self.type = PlanRoute
         self.route_latlon = route_latlon
+        self.fail_reason = fail_reason
         self.calls = 0
         self.server = ActionServer(node, PlanRoute, "/route_planner/plan_route", self._execute)
 
@@ -246,6 +250,12 @@ class PlanRouteServer:
 
         self.calls += 1
         result = self.type.Result()
+        if self.fail_reason:
+            result.success = False
+            result.reason = self.fail_reason
+            result.message = f"test planner: {self.fail_reason}"
+            goal_handle.succeed()  # the action succeeds, the planning result says no
+            return result
         result.success = True
         result.route.header.frame_id = "wgs84"
         for lat, lon in self.route_latlon:
@@ -286,7 +296,14 @@ class Rig:
         self.observer = Observer(self.context, self.route, intersections)
         self.executor = SingleThreadedExecutor(context=self.context)
         self.executor.add_node(self.observer)
-        self.plan_route = PlanRouteServer(self.observer, self.route_latlon) if plan_route else None
+        # plan_route: True = a planner that answers with the route; a string = a planner
+        # that fails every request with that reason.
+        self.plan_route = (
+            PlanRouteServer(
+                self.observer, self.route_latlon,
+                fail_reason=plan_route if isinstance(plan_route, str) else None,
+            ) if plan_route else None
+        )
         self.spin(1.0)
 
         self.gpx = write_gpx(tmp_path / "route.gpx", self.route, self.transform)
@@ -669,3 +686,33 @@ def test_f_sequence_waypoint_inside_the_arrival_box(rig, nearby_fix):
         f"{len(consumed)} consume events, pose={r.observer.pose}"
     )
     assert max(indices) > 1
+
+
+def test_g_unsnappable_goal_is_not_retried(rig):
+    """
+    A goal the planner cannot snap (snap_too_far: farther from any way than its limit)
+    is dropped after one attempt, without the plan_retries x plan_retry_delay wait, and
+    the follower is back in IDLE with a PLAN_FAILED event.
+    """
+    route = densify([(0, 0), (36, 0)])
+    r = rig(
+        domain=DOMAIN["g"],
+        route=route,
+        mission=True,
+        plan_route="snap_too_far",
+        start_follower=False,
+    )
+    r.start_follower({"plan_retries": 3, "plan_retry_delay": 20.0})
+    r.require(lambda: (r.observer.state_text() or "").startswith("IDLE"), 30, "IDLE")
+    lat, lon = r.route_latlon[-1]
+    r.observer.publish_qr_goal(lat, lon)
+
+    i_planning = wait_state(r, "PLANNING", 20)
+    # Well inside one plan_retry_delay: a retry would still be pending.
+    wait_state(r, "IDLE", 10, after=i_planning + 1)
+    assert r.plan_route.calls == 1, r.report()
+    failed = [e for _, e in r.observer.events if e.startswith("PLAN_FAILED")]
+    assert failed and "snap_too_far" in failed[0], f"{r.observer.events}\n{r.report()}"
+    names = [s for s in r.observer.state_names()]
+    assert "ROAD" not in names and "GPS" not in names, r.report()
+

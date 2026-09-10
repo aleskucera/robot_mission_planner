@@ -97,6 +97,10 @@
     plan_spacing: 3.0                   # m between route waypoints
     plan_retries: 3
     plan_retry_delay: 5.0               # s
+    # Failure reasons a retry cannot change: the goal is dropped after the first attempt.
+    # snap_too_far = the goal is farther from any way than route_planner's
+    # goal_max_snap_distance (30 m), i.e. a wrong or off-map QR code.
+    plan_no_retry_reasons: ["snap_too_far"]
     plan_timeout: 60.0                  # s per attempt
     start_delay: 5.0                    # s: route received -> first command
     goal_reached_radius: 5.0            # m to the last waypoint = arrived
