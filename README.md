@@ -203,8 +203,9 @@ Nothing in it commands the robot.
   centerline network produces: 0 at the road centre, ~252 at its edge, 255 off-road, so
   the road reads as the dark band. rviz2 takes the image transport from the topic name,
   so a compressed stream is named in full and there is no transport property to set.
-* **3D view** — the Helhest URDF (`helhest_description`, started here as
-  `robot_state_publisher` unless `description:=false`), the planned route and its
+* **3D view** — the Helhest URDF (`helhest_description`; live it comes from the robot
+  through the NUC's static TF relay, `description:=true` starts a `robot_state_publisher`
+  here for bags recorded without it), the planned route and its
   waypoints, the current `/goal_waypoint` and GPS sequence, the active intersection, the
   OSM footway cloud and intersections from `osm_cloud`, `/terrain_occupancy` as the
   traversability costmap, `/predicted_path_ls` and the hull-centre carrot. Off by default:
@@ -217,7 +218,7 @@ Nothing in it commands the robot.
   from the route path and tf, looked up at "latest" so a bag replay works unchanged.
 
 Useful arguments: `rviz:=false` (HUD only, e.g. rviz runs on a laptop), `hud:=false`,
-`description:=false` (something else publishes `/robot_description`), `robot_body:=true`
+`description:=true` (publish the URDF here, for old bags), `robot_body:=true`
 (a placeholder box instead of the URDF), `text_size:=`, `config:=`.
 
 The dock arrangement is the `QMainWindow State` hex at the end of the config, which
