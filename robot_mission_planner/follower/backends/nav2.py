@@ -20,6 +20,7 @@ class Nav2Backend(Backend):
     """
 
     kind = "nav2"
+    reports_progress = True
 
     def __init__(self, node, frames, *, use_utm: bool, road_reached_distance: float = 4.0):
         super().__init__(node, frames)

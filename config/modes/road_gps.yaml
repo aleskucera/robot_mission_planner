@@ -1,0 +1,7 @@
+# mode: road_gps -- follow the detected road, hand over to the route's waypoints around OSM
+# intersections, when the road detection drops out, when the commander is stuck, and for the
+# final approach. This is the Robotour mode; every default in follower.yaml is tuned for it,
+# so the overlay only names the mode.
+/**:
+  ros__parameters:
+    mode: "road_gps"

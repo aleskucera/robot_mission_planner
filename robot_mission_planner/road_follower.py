@@ -47,12 +47,9 @@ import time
 import numpy as np
 import rclpy
 import requests
-import utm
-from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
-from geographic_msgs.msg import GeoPointStamped, GeoPose
+from geographic_msgs.msg import GeoPointStamped
 from geometry_msgs.msg import PoseArray, PoseStamped
-from nav2_msgs.action import FollowGPSWaypoints, FollowWaypoints, NavigateToPose
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -62,12 +59,11 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
+from robot_mission_planner.follower.backends import KINDS as BACKEND_KINDS, make_backend
 from robot_mission_planner.follower.frames import (
     Frames,
     distance_to_polyline,
-    latlon_to_ecef,
     marker_point_in_header_frame,
-    transform_xyz,
 )
 from robot_mission_planner.follower.road_goal import (
     indices_near_polyline,
@@ -116,7 +112,11 @@ class RoadFollower(Node):
         self._active_intersection = None
 
         # --- Backend ---
-        self.declare_parameter("nav_backend", "commander")  # "commander" | "nav2"
+        # "commander" (crl_commander on the NUC), "nav2" (NavigateToPose + FollowWaypoints)
+        # or "follow_path" (a bare pure-pursuit controller, road following only).
+        self.declare_parameter("nav_backend", "commander")
+        self.declare_parameter("follow_path_action", "follow_path")
+        self.declare_parameter("follow_path_spacing", 0.25)  # m between synthetic path poses
 
         # --- Frames ---
         self.declare_parameter("map_frame", "FP_ENU0")  # fixed frame all geometry is compared in
@@ -272,8 +272,11 @@ class RoadFollower(Node):
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
         self.nav_backend = gp("nav_backend")
-        if self.nav_backend not in ("commander", "nav2"):
-            self.get_logger().error(f"Unknown nav_backend '{self.nav_backend}', using 'commander'")
+        if self.nav_backend not in BACKEND_KINDS:
+            self.get_logger().error(
+                f"Unknown nav_backend '{self.nav_backend}' (expected one of {BACKEND_KINDS}), "
+                "using 'commander'"
+            )
             self.nav_backend = "commander"
         self.map_frame = gp("map_frame")
         self.robot_frame = gp("robot_frame")
@@ -344,7 +347,6 @@ class RoadFollower(Node):
         self.waypoint_src_frame = (
             self.earth_frame if self.nav_backend == "commander" else self.utm_frame
         )
-        self._geo_goals = self.nav_backend == "nav2" and not self.use_utm
         self.frames = Frames(
             self,
             map_frame=self.map_frame,
@@ -354,32 +356,31 @@ class RoadFollower(Node):
 
         # --- Backend I/O ---
         latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self.commander_mode = None
         if self.nav_backend == "commander":
-            from crl_commander.srv import ConfigureSequenceMode, SwitchMode
-
-            self._srv_types = {"switch": SwitchMode, "configure": ConfigureSequenceMode}
-            self._pub_goal_waypoint = self.create_publisher(
-                PoseStamped, gp("goal_waypoint_topic"), latched
+            self.backend = make_backend(
+                "commander", self, self.frames,
+                earth_frame=self.earth_frame,
+                goal_waypoint_topic=gp("goal_waypoint_topic"),
+                goal_sequence_topic=gp("goal_sequence_topic"),
+                switch_mode_service=gp("switch_mode_service"),
+                configure_sequence_service=gp("configure_sequence_service"),
+                state_topic=gp("commander_state_topic"),
+                restart_gap=self.commander_restart_gap,
+                service_timeout=self.service_timeout,
             )
-            self._pub_goal_sequence = self.create_publisher(
-                PoseArray, gp("goal_sequence_topic"), latched
-            )
-            self._cli_switch_mode = self.create_client(SwitchMode, gp("switch_mode_service"))
-            self._cli_configure_seq = self.create_client(
-                ConfigureSequenceMode, gp("configure_sequence_service")
-            )
-            self.create_subscription(
-                String, gp("commander_state_topic"), self._commander_state_callback, 10
+        elif self.nav_backend == "follow_path":
+            self.backend = make_backend(
+                "follow_path", self, self.frames,
+                action_name=gp("follow_path_action"), path_spacing=gp("follow_path_spacing"),
             )
         else:
-            self._road_action_client = ActionClient(self, NavigateToPose, "navigate_to_pose")
-            if not self.use_utm:
-                self._gps_action_client = ActionClient(
-                    self, FollowGPSWaypoints, "follow_gps_waypoints"
-                )
-            else:
-                self._gps_action_client = ActionClient(self, FollowWaypoints, "follow_waypoints")
+            self.backend = make_backend(
+                "nav2", self, self.frames,
+                use_utm=self.use_utm, road_reached_distance=self.gps_threshold,
+            )
+            self.backend.on_sequence_succeeded = self._sequence_succeeded
+        self.backend.on_goal_inactive = self._backend_goal_inactive
+        self.backend.on_waypoint_reached = self._backend_waypoint_reached
 
         self._waypoint_marker_scale = float(gp("waypoint_marker_scale"))
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
@@ -416,23 +417,15 @@ class RoadFollower(Node):
         self._intersections = None  # PoseArray as received
         self._intersections_map = None  # np.ndarray (N, 2) in map_frame
         self._intersections_on_route = None  # the subset of them on the planned route
-        self._goal_handle = None
         self._goal_active = False
-        self._threshold_triggered = False
         self._last_road_goal = None  # (x, y) in map_frame of the active ROAD goal
         self._pending_goal_timer = None
         self._gps_start_index = 0
-        self._requested_mode = None  # last mode asked of the commander (state topic lags)
-        self._commander_state_time = None  # node clock seconds of the last state message
-        self._commander_restarted = False  # set by the state-gap detector, consumed in the loop
-        self._requested_mode_time = 0.0
-        self._mode_settle_time = 2.0  # s after a switch before the state topic is trusted
         self.route.synced = False  # first sync searches the whole list
         self._gps_reason = None  # why GPS mode was entered
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
         self._gps_route_dir = None  # unit route direction leaving the active intersection
         self._gps_node_index = None  # route waypoint nearest to the active intersection
-        self._service_watchdogs = []
         self._mission_goal = None  # (lat, lon) of the QR goal being planned / followed
         self._pending_goal = None  # (lat, lon, stamp) seen while busy, taken on IDLE
         self._home = None  # (lat, lon) of the service area, captured at the first goal
@@ -484,12 +477,11 @@ class RoadFollower(Node):
                     "see map_data/map_data_interfaces)"
                 )
 
-        if self.nav_backend == "nav2":
-            self.get_logger().info("Waiting for Nav2 action servers...")
-            self._road_action_client.wait_for_server()
-            self._gps_action_client.wait_for_server()
+        if hasattr(self.backend, "wait_for_servers"):
+            self.get_logger().info(f"Waiting for the {self.nav_backend} action servers...")
+            self.backend.wait_for_servers()
         else:
-            if not self._cli_switch_mode.wait_for_service(timeout_sec=5.0):
+            if not self.backend._cli_switch.wait_for_service(timeout_sec=5.0):
                 self.get_logger().warning(
                     f"Commander service {gp('switch_mode_service')} not available yet; "
                     "mode switches will be retried when needed."
@@ -572,6 +564,11 @@ class RoadFollower(Node):
         self.route.index = int(value)
 
     @property
+    def _geo_goals(self) -> bool:
+        """True when waypoints go out as lat/lon and never need a map_frame position."""
+        return self.backend.geo_goals
+
+    @property
     def _tf_ready(self) -> bool:
         """True once route waypoints have a position (or need none, with lat/lon goals)."""
         return self.frames.ready or self._geo_goals
@@ -631,38 +628,9 @@ class RoadFollower(Node):
 
     def _process_waypoints(self):
         """Convert raw lat/lon waypoints into backend goals and map_frame coordinates."""
-        self.waypoints = [self._convert_to_msg(pt) for pt in self.route.raw]
-        self.route.place(self.frames, self._raw_to_src)
+        self.waypoints = [self.backend.waypoint_msg(pt) for pt in self.route.raw]
+        self.route.place(self.frames, self.backend.to_src)
         self._intersections_on_route = None  # the route polyline moved
-
-    def _raw_to_src(self, point):
-        """Waypoint in the source frame (ECEF for commander, UTM for nav2)."""
-        if self.nav_backend == "commander":
-            return latlon_to_ecef(point["lat"], point["lon"], point.get("ele", 0.0))
-        e, n, _, _ = utm.from_latlon(point["lat"], point["lon"])
-        return e, n, point.get("ele", 0.0)
-
-    def _convert_to_msg(self, point):
-        """Backend goal message for one waypoint."""
-        if self.nav_backend == "nav2" and not self.use_utm:
-            msg = GeoPose()
-            msg.position.latitude = point["lat"]
-            msg.position.longitude = point["lon"]
-            msg.position.altitude = point["ele"]
-            return msg
-        msg = PoseStamped()
-        x, y, z = self._raw_to_src(point)
-        if self.nav_backend == "commander":
-            # The commander transforms poses into its map frame itself; publish in ECEF so
-            # the waypoints stay valid if the local ENU origin changes between runs.
-            msg.header.frame_id = self.earth_frame
-            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = x, y, z
-        else:
-            msg.header.frame_id = self.map_frame
-            mx, my, mz = transform_xyz(self.frames.src_to_map, x, y, z)
-            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = mx, my, mz
-        msg.pose.orientation.w = 1.0
-        return msg
 
     def _waypoint_distance(self, idx, rob_xy):
         """Distance (m) from the robot to waypoint ``idx`` (inf if unknown)."""
@@ -873,43 +841,20 @@ class RoadFollower(Node):
             return False
         return (self._now() - self._last_road_path_time) < self.road_path_timeout
 
-    def _commander_state_callback(self, msg):
-        if msg.data != self.commander_mode:
-            self.get_logger().info(f"Commander state: {msg.data}")
-        now = self._now()
-        if (
-            self.commander_restart_gap > 0
-            and self._commander_state_time is not None
-            and (now - self._commander_state_time) > self.commander_restart_gap
-        ):
-            self.get_logger().warning(
-                f"Commander state silent for {now - self._commander_state_time:.0f} s: "
-                "assuming a restart, re-sending the current goal."
-            )
-            self._commander_restarted = True
-            self._requested_mode = None
-        self._commander_state_time = now
-        self.commander_mode = msg.data
-        # The commander leaves our mode on its own (sequence finished -> STOP, operator
-        # intervention, STUCK). Forget the request so the next switch is actually sent.
-        if (
-            self._requested_mode is not None
-            and msg.data.lower() != self._requested_mode
-            and (self._now() - self._requested_mode_time) > self._mode_settle_time
-        ):
-            self._requested_mode = None
+    def _backend_goal_inactive(self):
+        """The backend has no goal being driven any more."""
+        self._goal_active = False
 
-    def _commander_left_us(self) -> bool:
-        """True once the commander sits in STOP although we asked for goto/sequence."""
-        return (
-            self.commander_mode is not None
-            and self.commander_mode.upper() == "STOP"
-            and self._requested_mode is None
-            and self._goal_active
-        )
+    def _backend_waypoint_reached(self, index: int):
+        if index != self.current_waypoint_index:
+            self.get_logger().info(f"Backend feedback: reached waypoint {index}")
+            self.current_waypoint_index = index
 
-    def _commander_stuck(self) -> bool:
-        return self.commander_mode is not None and "STUCK" in self.commander_mode.upper()
+    def _sequence_succeeded(self):
+        """nav2 finished the whole waypoint sequence."""
+        if self.state == self.STATE_GPS and self.loop:
+            self.current_waypoint_index = 0
+            self._send_gps_goal()
 
     def _gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
@@ -1015,19 +960,19 @@ class RoadFollower(Node):
         ):
             self._enter_arrived(rob_xy)
             return
-        # Nav2 reports the waypoint index through action feedback; the commander does not.
-        if self.state == self.STATE_ROAD or self.nav_backend == "commander":
+        # Some backends report the waypoint index and the distance to the goal through action
+        # feedback (nav2); with the others the follower keeps track itself.
+        if self.state == self.STATE_ROAD or not self.backend.reports_progress:
             self._sync_waypoint_index_to_closest(rob_xy)
-        if self.nav_backend == "commander" and self.state == self.STATE_ROAD:
+        if not self.backend.reports_progress and self.state == self.STATE_ROAD:
             self._check_road_goal_reached(rob_xy)
-        if self.nav_backend == "commander" and self._commander_restarted:
-            self._commander_restarted = False
+        if self.backend.take_restarted():
             self._goal_active = False
             if self.state == self.STATE_GPS:
                 self._send_gps_goal()
             else:
                 self._send_road_goal()
-        elif self.nav_backend == "commander" and self._commander_left_us():
+        elif self.backend.left_us(self._goal_active):
             if self.state == self.STATE_GPS:
                 # The sequence window (gps_sequence_window) was consumed: send the next one.
                 self.get_logger().info("Commander finished the sequence window; sending the next one.")
@@ -1120,7 +1065,7 @@ class RoadFollower(Node):
                 self._enter_gps(GPS_REASON_FINAL, None, f"{remaining:.1f} m of route left")
             elif closest < self.enter_threshold:
                 self._enter_gps(GPS_REASON_INTERSECTION, closest_xy, f"approaching intersection ({closest:.2f} m)")
-            elif self.stuck_fallback_to_gps and self._commander_stuck():
+            elif self.stuck_fallback_to_gps and self.backend.stuck():
                 self._enter_gps(GPS_REASON_STUCK, None, "commander reports STUCK")
             elif not self._road_path_fresh() and (self._now() - self._start_time) > self.road_path_timeout:
                 self._enter_gps(GPS_REASON_NO_ROAD, None, f"no road path for {self.road_path_timeout} s")
@@ -1180,7 +1125,7 @@ class RoadFollower(Node):
                     return
             why = f"passed intersection (closest {closest:.2f} m)"
         elif self._gps_reason == GPS_REASON_STUCK:
-            if self._commander_stuck() or advanced < max(1, self.gps_exit_min_waypoints):
+            if self.backend.stuck() or advanced < max(1, self.gps_exit_min_waypoints):
                 return
             why = "commander no longer stuck"
         else:  # GPS_REASON_NO_ROAD
@@ -1242,7 +1187,7 @@ class RoadFollower(Node):
         no pause unless transition_delay says so, because every stop costs seconds at each
         of the many intersections. Nav2, or stop_between_modes: cancel first, then wait 1 s.
         """
-        if self.nav_backend != "commander" or self.stop_between_modes:
+        if not self.backend.direct_hand_over or self.stop_between_modes:
             self._cancel_current_goal()
             self._schedule_goal(delay_sec=max(1.0, self.transition_delay), mode=mode)
             return
@@ -1539,12 +1484,7 @@ class RoadFollower(Node):
         self._send_gps_goal()
 
     def _cancel_current_goal(self):
-        if self.nav_backend == "commander":
-            self._commander_switch_mode("stop")
-        elif self._goal_handle is not None:
-            self.get_logger().info("Cancelling current goal for state transition.")
-            self._goal_handle.cancel_goal_async()
-            self._goal_handle = None
+        self.backend.cancel()
         self._goal_active = False
 
     def _road_goal_valid(self, goal_xy, quiet: bool = False) -> bool:
@@ -1588,12 +1528,6 @@ class RoadFollower(Node):
         goal_xy = candidate[:2]
         if not self._road_goal_valid(goal_xy):
             return
-        pose_stamped = PoseStamped()
-        pose_stamped.header.stamp = self.get_clock().now().to_msg()
-        pose_stamped.header.frame_id = self.map_frame
-        pose_stamped.pose.position.x, pose_stamped.pose.position.y = float(goal_xy[0]), float(goal_xy[1])
-        pose_stamped.pose.orientation.z = math.sin(candidate[2] / 2.0)
-        pose_stamped.pose.orientation.w = math.cos(candidate[2] / 2.0)
         self.get_logger().info(
             f"Road goal ({self.road_goal_source}): ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) "
             f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg"
@@ -1601,19 +1535,8 @@ class RoadFollower(Node):
             throttle_duration_sec=2.0,
         )
         self._goal_active = True
-        self._threshold_triggered = False
         self._last_road_goal = goal_xy
-
-        if self.nav_backend == "commander":
-            self._pub_goal_waypoint.publish(pose_stamped)
-            self._commander_switch_mode("goto")
-            return
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose = pose_stamped
-        self.send_goal_future = self._road_action_client.send_goal_async(
-            goal_msg, feedback_callback=self._road_feedback_callback
-        )
-        self.send_goal_future.add_done_callback(self._goal_response_callback)
+        self.backend.send_pose(goal_xy[0], goal_xy[1], candidate[2])
 
     def _road_goal_log_suffix(self, goal_xy) -> str:
         """``route`` source: how far ahead of the robot the goal is and how far off the route."""
@@ -1651,157 +1574,10 @@ class RoadFollower(Node):
         self._gps_start_index = start
         self.get_logger().info(f"GPS goal: sending {len(remaining)} waypoints from index {start}.")
         self._goal_active = True
-
-        if self.nav_backend == "commander":
-            seq = PoseArray()
-            seq.header.frame_id = remaining[0].header.frame_id
-            seq.header.stamp = self.get_clock().now().to_msg()
-            seq.poses = [wp.pose for wp in remaining]
-            self._commander_configure_sequence(lambda: self._publish_sequence(seq))
-            return
-        if not self.use_utm:
-            goal_msg = FollowGPSWaypoints.Goal()
-            goal_msg.gps_poses = remaining
+        if self.backend.kind == "nav2":
+            self.backend.send_sequence(remaining, loop=self.loop, start_index=start)
         else:
-            goal_msg = FollowWaypoints.Goal()
-            goal_msg.poses = remaining
-        self.send_goal_future = self._gps_action_client.send_goal_async(
-            goal_msg, feedback_callback=self._gps_feedback_callback
-        )
-        self.send_goal_future.add_done_callback(self._goal_response_callback)
-
-    # ------------------------------------------------------------------ commander backend
-    def _watch_service_call(self, future, what, on_timeout=None):
-        """Log (and optionally react) when a service call does not return in time."""
-        if self.service_timeout <= 0:
-            return
-
-        def check():
-            timer.cancel()
-            self._service_watchdogs = [t for t in self._service_watchdogs if t is not timer]
-            if not future.done():
-                self.get_logger().error(f"{what} did not respond within {self.service_timeout} s")
-                if on_timeout:
-                    on_timeout()
-
-        timer = self.create_timer(self.service_timeout, check)
-        self._service_watchdogs.append(timer)
-
-    def _publish_sequence(self, seq: PoseArray):
-        self._pub_goal_sequence.publish(seq)
-        self._commander_switch_mode("sequence")
-
-    def _commander_configure_sequence(self, then):
-        """
-        Make the commander take its sequence from the topic, then call ``then``.
-
-        Sent before every sequence, not once: a restarted commander is back at its launch
-        default (2026-09-08 it loaded a GPX file from disk mid-mission), and the call is cheap.
-        """
-        cli = self._cli_configure_seq
-        if not cli.service_is_ready():
-            self.get_logger().warning(
-                f"{cli.srv_name} not ready; publishing the sequence anyway (commander must be "
-                "configured with sequence_source=topic)."
-            )
-            then()
-            return
-        req = self._srv_types["configure"].Request()
-        req.source = req.SOURCE_TOPIC
-        req.gpx_file_name = ""
-        req.loop = bool(self.loop)
-        called = {"then": False}
-
-        def run_then():
-            if not called["then"]:
-                called["then"] = True
-                then()
-
-        def done(fut):
-            try:
-                res = fut.result()
-                self.get_logger().info(f"configure_sequence_mode: {res.success} {res.message}")
-            except Exception as e:
-                self.get_logger().error(f"configure_sequence_mode failed: {e}")
-            run_then()
-
-        future = cli.call_async(req)
-        future.add_done_callback(done)
-        self._watch_service_call(future, "configure_sequence_mode", on_timeout=run_then)
-
-    def _commander_switch_mode(self, mode: str):
-        # The state topic lags the request; remember what we asked for so that a burst of
-        # path messages does not turn into a burst of identical service calls.
-        if self._requested_mode == mode:
-            return
-        if self.commander_mode is not None and self.commander_mode.lower() == mode:
-            self._requested_mode = mode
-            self._requested_mode_time = self._now()
-            return
-        cli = self._cli_switch_mode
-        if not cli.service_is_ready():
-            self.get_logger().warning(f"{cli.srv_name} not ready; cannot switch to '{mode}'.")
-            return
-        self._requested_mode = mode
-        self._requested_mode_time = self._now()
-        req = self._srv_types["switch"].Request()
-        req.mode = mode
-
-        def reset_request():
-            if self._requested_mode == mode:
-                self._requested_mode = None  # allow a retry
-
-        def done(fut):
-            try:
-                res = fut.result()
-                level = self.get_logger().info if res.success else self.get_logger().error
-                level(f"switch_mode('{mode}'): {res.success} {res.message}")
-                if not res.success:
-                    reset_request()
-            except Exception as e:
-                self.get_logger().error(f"switch_mode('{mode}') failed: {e}")
-                reset_request()
-
-        future = cli.call_async(req)
-        future.add_done_callback(done)
-        self._watch_service_call(future, f"switch_mode('{mode}')", on_timeout=reset_request)
-
-    # ------------------------------------------------------------------ nav2 backend
-    def _goal_response_callback(self, future):
-        self._goal_handle = future.result()
-        if not self._goal_handle.accepted:
-            self.get_logger().error("Goal rejected by action server.")
-            self._goal_active = False
-            return
-        self.get_logger().info("Goal accepted.")
-        self.result_future = self._goal_handle.get_result_async()
-        self.result_future.add_done_callback(self._result_callback)
-
-    def _road_feedback_callback(self, feedback_msg):
-        dist = feedback_msg.feedback.distance_remaining
-        if dist == 0.0:
-            return
-        if dist < self.gps_threshold and not self._threshold_triggered:
-            self._threshold_triggered = True
-            self.get_logger().info(f"Road distance threshold reached ({dist:.2f} m).")
-            self._goal_active = False
-
-    def _gps_feedback_callback(self, feedback_msg):
-        new_global_idx = self._gps_start_index + feedback_msg.feedback.current_waypoint
-        if new_global_idx != self.current_waypoint_index:
-            self.get_logger().info(f"GPS feedback: reached waypoint {new_global_idx}")
-            self.current_waypoint_index = new_global_idx
-
-    def _result_callback(self, future):
-        status = future.result().status
-        self.get_logger().info(f"Goal finished with status: {status}")
-        self._goal_active = False
-        if status == GoalStatus.STATUS_SUCCEEDED:
-            if self.state == self.STATE_GPS and self.loop:
-                self.current_waypoint_index = 0
-                self._send_gps_goal()
-        elif status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().warning("Goal aborted.")
+            self.backend.send_sequence(remaining, loop=self.loop)
 
     # ------------------------------------------------------------------ shutdown
     def save_waypoint_index(self):

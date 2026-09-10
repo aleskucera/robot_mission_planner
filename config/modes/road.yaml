@@ -1,0 +1,13 @@
+# mode: road -- follow the detected road and nothing else: no route, no intersections, no
+# goal to arrive at (what road_follower_simple did). The robot drives until it is stopped.
+/**:
+  ros__parameters:
+    mode: "road"
+    file: ""                          # a route file is ignored in this mode
+    # No route to measure against: the road goal cannot be checked for being off it, and
+    # "route" as the goal source falls back to the plain carrot.
+    road_goal_source: "carrot"
+    road_goal_max_route_offset: 0.0
+    # Nothing to fall back to when the road detection stops, and no goal to approach.
+    road_path_timeout: 0.0
+    final_approach_distance: 0.0
