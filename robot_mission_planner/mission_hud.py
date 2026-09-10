@@ -106,6 +106,8 @@ class MissionHud(Node):
         # future rviz build draws the markup verbatim.
         self.markup = bool(p("markup", True).value)
         self.rate = float(p("rate", 4.0).value)
+        # Last line of the mission panel: how the operator intervenes ("" = no line).
+        self.hint = str(p("hint", "abort: Up+Enter in the follower window, pane 2").value)
 
         # ---- placeholder robot body (a URDF on /robot_description is the real thing)
         self.body_enabled = bool(p("robot_body", True).value)
@@ -235,6 +237,8 @@ class MissionHud(Node):
         if self._goal is not None:
             goal = f"{self._goal.position.latitude:.7f}, {self._goal.position.longitude:.7f}"
         lines.append(self._row("QR goal", goal))
+        if self.hint:
+            lines.append(self._row("hint", self.hint, GREY))
         return self._overlay(lines, right=False, bg=rgba(0.06, 0.06, 0.08, self.bg_alpha))
 
     def _status_panel(self) -> OverlayText:

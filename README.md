@@ -212,7 +212,8 @@ Nothing in it commands the robot.
   the dense `/terrain_map` cloud and the `/road_cloud` / `/road_map_2` clouds (cloudini
   transport, which only the robot has).
 * **Overlays** — left: follower state, route progress, commander state, last mission
-  event, planner status, QR goal; right: e-stop (the panel turns red when it is in),
+  event, planner status, QR goal and a `hint` line (how to abort and continue, a
+  parameter); right: e-stop (the panel turns red when it is in),
   battery, the hottest motor temperature, GNSS position and fix. `mission_hud` builds
   both from the mission and robot topics, every one a parameter; route progress comes
   from the route path and tf, looked up at "latest" so a bag replay works unchanged.

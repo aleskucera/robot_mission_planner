@@ -27,6 +27,10 @@
     font: "DejaVu Sans Mono"
     markup: true                    # false if a future rviz build draws the markup verbatim
     rate: 4.0                       # Hz
+    # Last line of the mission panel: how the operator intervenes. The NUC robotour tmux
+    # session keeps the abort service call in the history of the follower window's second
+    # pane; showing the next QR code is the continue signal. "" = no line.
+    hint: "abort: Up+Enter, follower pane 2 | go on: next QR"
 
     # Placeholder body box: only useful with description:=false and nothing else publishing
     # /robot_description (the rviz RobotModel display is off to match).
