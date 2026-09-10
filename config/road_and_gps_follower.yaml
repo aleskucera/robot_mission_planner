@@ -81,15 +81,36 @@
     # Road goal source. carrot: the convex-hull centre of the road points in the current
     # lidar frame (build_point_cloud /cloud_hull_center_marker, Marker; or a Path's last pose
     # with carrot_type: path). path: the fitted/extrapolated /predicted_path_ls from
-    # path_predictor. The goal is always kept road_goal_min_ahead in front of the robot:
-    # crl_commander treats a goal inside its 2.5 m arrival box as reached and stops.
-    road_goal_source: "carrot"          # carrot | path
+    # path_predictor. route: the carrot projected on the planned OSM route and stretched
+    # further along it (see route_stretch_distance below). The goal is always kept
+    # road_goal_min_ahead in front of the robot: crl_commander treats a goal inside its
+    # 2.5 m arrival box as reached and stops.
+    road_goal_source: "carrot"          # carrot | path | route
     carrot_topic: "/cloud_hull_center_marker"
     carrot_type: "marker"               # marker | path
     road_goal_min_ahead: 4.0            # m: never send a closer goal
     road_goal_max_ahead: 12.0           # m: farther = projection artefact
     road_goal_smoothing: 0.0            # carrot: 0 = raw, 0.8 = damped
     road_goal_reached_distance: 2.5     # m: forget the active road goal
+
+    # road_goal_source: "route" only. The hull centre lags the robot (it is the centre of what
+    # the lidar sees, not a point down the road), so the plain carrot goal ends up being
+    # "min_ahead metres along the current heading" - it cannot anticipate a bend and gets
+    # thrown off the path on one. Here the robot and the carrot are projected onto the planned
+    # route instead, the goal is placed route_stretch_distance further along the route from
+    # whichever of the two is ahead, and the carrot's own lateral offset from the route is
+    # carried over to it. The route contributes the shape of the road only: its absolute
+    # position carries the OSM error and the GNSS error, and both cancel because the offset is
+    # re-measured against the same route every frame. The offset is clamped by the
+    # road_goal_max_route_offset limits below (relative to the robot's own offset), and the
+    # goal still obeys road_goal_min_ahead / road_goal_max_ahead.
+    route_stretch_distance: 6.0         # m along the route past the robot/carrot projection
+    route_lateral_gain: 1.0             # how much of the carrot's offset is carried over
+    route_stretch_max_turn: 45.0        # deg: do not stretch past a sharper corner (0 = off)
+    route_projection_window: 10         # waypoints searched around the current index (0 = all)
+    # true = keep following the route (at the robot's own offset) when no carrot arrives, i.e.
+    # drive the map blind instead of falling back to GPS mode after road_path_timeout.
+    route_goal_without_carrot: false
 
     # Mission (Robotour): QR goal -> route_planner -> 5 s pause -> follow -> arrive -> idle
     qr_goal_topic: "/qr_goal/goal"      # GeoPointStamped from qr_goal

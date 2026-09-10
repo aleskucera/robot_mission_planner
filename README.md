@@ -42,7 +42,8 @@ from the start.
   `carrot` (default) drives at the convex-hull centre of the road points in the current lidar
   frame (`carrot_topic`, `/cloud_hull_center_marker` from `build_point_cloud`; or a `Path`'s
   last pose with `carrot_type=path`), `path` takes the fitted `/predicted_path_ls` from
-  `path_predictor`. Both keep the goal between `road_goal_min_ahead` and `road_goal_max_ahead`
+  `path_predictor`, `route` combines the carrot with the planned OSM route (below). All of them
+  keep the goal between `road_goal_min_ahead` and `road_goal_max_ahead`
   in front of the robot (a closer observation is pushed out along its bearing, a short
   predicted path is extrapolated along its last segment): `crl_commander` treats a goal inside
   its 2.5 m arrival box as already reached and would stop. The selection is pure geometry in
@@ -51,6 +52,25 @@ from the start.
   `road_goal_max_route_offset` of the route) counts as "road seen": a carrot behind the
   robot or a path off the route does not keep ROAD mode alive, so `road_path_timeout`
   hands over to the GPS route instead of leaving a stale goal in the commander.
+* **`road_goal_source: route`** — the hull centre is the centre of what the lidar sees, so it
+  lags the robot and the plain `carrot` goal degenerates into "`road_goal_min_ahead` metres
+  along the current heading": it cannot anticipate a bend, and on one it lands off the path and
+  is rejected as off-route. In `route` mode the robot **and** the carrot are projected onto the
+  planned route, the goal is placed `route_stretch_distance` (6 m) further along the route from
+  whichever of the two projects farther ahead, and the carrot's own lateral offset from the
+  route is carried over to it (`route_lateral_gain`, clamped by the `road_goal_max_route_offset`
+  limits, which are relative to the robot's own offset). The map thus supplies only the *shape*
+  of the road: its absolute position carries the OSM error and the GNSS error — the robot itself
+  drove up to 5.5 m off the mapped centreline on 2026-09-08 — and both cancel out because the
+  offset is re-measured against the same route every frame. The stretch stops before a corner
+  sharper than `route_stretch_max_turn` (unless that would put the goal inside the commander's
+  arrival box), `route_projection_window` waypoints bound the projection so a route folding back
+  on itself is not snapped to the wrong leg, and the route-offset sanity check is applied to the
+  carrot instead of the goal (which is on the route by construction). Without a route (a
+  `gps_file`-less road-only run, or before the waypoint TF resolves) the mode falls back to
+  `carrot`; without a carrot it sends nothing, so `road_path_timeout` still hands over to GPS
+  mode — unless `route_goal_without_carrot` is set, which keeps driving the mapped route at the
+  robot's own offset.
 * **GPS** state: entered when the robot is within `intersection_enter_threshold` of an OSM
   intersection, when no usable road observation arrived for `road_path_timeout` seconds, or when the
   commander reports `STUCK` (`stuck_fallback_to_gps`). The next `gps_sequence_window`
@@ -104,6 +124,9 @@ ros2 launch robot_mission_planner road_and_gps_follower.launch \
     gps_file:=stromovka_planned.gpx nav_backend:=commander
 # predicted-path goal instead of the carrot:
 ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=path
+
+# or the carrot stretched along the planned OSM route:
+ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=route
 # a whole different parameter set:
 ros2 launch robot_mission_planner road_and_gps_follower.launch config:=/path/to/my.yaml
 ```

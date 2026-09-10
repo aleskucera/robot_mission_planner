@@ -9,9 +9,13 @@ ROAD  : follow the visually detected road. The goal is taken from ``road_goal_so
         current lidar frame (``carrot_topic``, a visualization_msgs/Marker from
         build_point_cloud, or a nav_msgs/Path whose last pose is used); ``path`` takes
         the predicted road path (``road_points_topic``, nav_msgs/Path from
-        path_centerline). Either way the goal is kept at least ``road_goal_min_ahead``
-        in front of the robot (see ``road_goal.py``), because the commander treats a
-        goal inside its 2.5 m arrival box as already reached and stops.
+        path_centerline); ``route`` stretches the carrot along the planned OSM route
+        (``route_stretch_distance`` further along it, keeping the carrot's own lateral
+        offset from the route), so the goal follows the road's mapped shape while the
+        map is only ever used relative to the robot's own projection on it. Either way
+        the goal is kept at least ``road_goal_min_ahead`` in front of the robot (see
+        ``road_goal.py``), because the commander treats a goal inside its 2.5 m arrival
+        box as already reached and stops.
 GPS   : follow the pre-planned GPX waypoints instead. Entered near an OSM intersection
         (``intersections_topic``, geometry_msgs/PoseArray from map_data/osm_cloud), when
         the road path stops arriving (``road_path_timeout``) or when the commander reports
@@ -69,10 +73,13 @@ from robot_mission_planner.road_goal import (
     latlon_distance,
     nearest_index,
     passed_along,
+    polyline_cumulative,
+    project_on_route,
     remaining_route_length,
     route_offset_limit,
     select_carrot_goal,
     select_path_goal,
+    select_route_goal,
     smooth,
 )
 
@@ -217,7 +224,8 @@ class RoadFollower(Node):
         self.declare_parameter("road_goal_reject_behind", True)
         # Where the ROAD goal comes from: "carrot" = one road-centre point per lidar frame
         # (convex-hull centre from build_point_cloud), "path" = the fitted/extrapolated
-        # /predicted_path_ls from path_predictor.
+        # /predicted_path_ls from path_predictor, "route" = the carrot projected on the
+        # planned OSM route and stretched route_stretch_distance further along it.
         self.declare_parameter("road_goal_source", "carrot")
         self.declare_parameter("carrot_topic", "/cloud_hull_center_marker")
         self.declare_parameter("carrot_type", "marker")  # marker | path (last pose)
@@ -229,6 +237,18 @@ class RoadFollower(Node):
         # Commander backend: forget the active road goal once this close to it, so the
         # next observation re-sends one (the commander's own arrival box is 2.5 m).
         self.declare_parameter("road_goal_reached_distance", 2.5)
+        # road_goal_source "route": how far along the planned route (m) past the robot /
+        # carrot projection the goal is placed, how much of the carrot's lateral offset from
+        # the route is carried over to it, the sharpest corner (deg) the stretch may reach
+        # past (0 = no limit) and how many waypoints around the current index are searched
+        # when projecting (0 = the whole route; a route folding back on itself needs a
+        # window). Without a carrot the goal keeps the robot's own offset instead, which
+        # drives the mapped route blind: off by default.
+        self.declare_parameter("route_stretch_distance", 6.0)
+        self.declare_parameter("route_lateral_gain", 1.0)
+        self.declare_parameter("route_stretch_max_turn", 45.0)
+        self.declare_parameter("route_projection_window", 10)
+        self.declare_parameter("route_goal_without_carrot", False)
         # Failure handling
         self.declare_parameter("road_path_timeout", 5.0)  # s without a road path -> GPS (0 = off)
         self.declare_parameter("stuck_fallback_to_gps", True)  # commander STUCK in ROAD -> GPS
@@ -319,7 +339,7 @@ class RoadFollower(Node):
         self.road_goal_max_route_offset_hard = float(gp("road_goal_max_route_offset_hard"))
         self.road_goal_reject_behind = gp("road_goal_reject_behind")
         self.road_goal_source = gp("road_goal_source")
-        if self.road_goal_source not in ("carrot", "path"):
+        if self.road_goal_source not in ("carrot", "path", "route"):
             self.get_logger().error(
                 f"Unknown road_goal_source '{self.road_goal_source}', using 'carrot'"
             )
@@ -329,6 +349,11 @@ class RoadFollower(Node):
         self.road_goal_max_ahead = gp("road_goal_max_ahead")
         self.road_goal_smoothing = gp("road_goal_smoothing")
         self.road_goal_reached_distance = gp("road_goal_reached_distance")
+        self.route_stretch_distance = float(gp("route_stretch_distance"))
+        self.route_lateral_gain = float(gp("route_lateral_gain"))
+        self.route_stretch_max_turn = math.radians(float(gp("route_stretch_max_turn")))
+        self.route_projection_window = int(gp("route_projection_window"))
+        self.route_goal_without_carrot = bool(gp("route_goal_without_carrot"))
         self.road_path_timeout = gp("road_path_timeout")
         self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
         self.service_timeout = gp("service_timeout")
@@ -410,6 +435,8 @@ class RoadFollower(Node):
         self.waypoints_map = []  # (x, y) in map_frame for distance checks
         self._route_a = np.empty((0, 2))  # route polyline segments in map_frame
         self._route_b = np.empty((0, 2))
+        self._route_xy: list = []  # the same polyline as a point list, for road_goal.py
+        self._route_cum: list = []  # cumulative arclength (m) at every route point
         self.gps_path = ""
         self._route_source = ""
         file_points = self._load_gps_data()
@@ -514,8 +541,14 @@ class RoadFollower(Node):
             f"Road follower initialised (backend={self.nav_backend}, map_frame={self.map_frame}, "
             f"robot_frame={self.robot_frame}, waypoint frame={self.waypoint_src_frame}).\n"
             f"Road goal: {self.road_goal_source} "
-            f"({gp('carrot_topic') if self.road_goal_source == 'carrot' else gp('road_points_topic')}), "
-            f"ahead {self.road_goal_min_ahead}-{self.road_goal_max_ahead} m; "
+            f"({gp('road_points_topic') if self.road_goal_source == 'path' else gp('carrot_topic')}), "
+            f"ahead {self.road_goal_min_ahead}-{self.road_goal_max_ahead} m"
+            + (
+                f", stretched {self.route_stretch_distance} m along the route"
+                if self.road_goal_source == "route"
+                else ""
+            )
+            + "; "
             f"intersections: {gp('intersections_topic')}, "
             f"GPS file: {self.gps_file_name or '-'}, QR goals: {gp('qr_goal_topic')} -> "
             f"{gp('plan_route_action')}, start delay {self.start_delay} s, "
@@ -684,6 +717,8 @@ class RoadFollower(Node):
         self.waypoints_map = [self._raw_to_map(pt) for pt in self.waypoints_raw]
         self.number_waypoints = len(self.waypoints)
         xy = np.array([p for p in self.waypoints_map if p is not None], dtype=float)
+        self._route_xy = [(float(p[0]), float(p[1])) for p in xy]
+        self._route_cum = polyline_cumulative(self._route_xy)
         if len(xy) >= 2:
             self._route_a, self._route_b = xy[:-1], xy[1:]
         else:
@@ -869,7 +904,11 @@ class RoadFollower(Node):
         if pose is None:
             return None
         rob_xy, yaw = pose[:2], pose[2]
-        if self.road_goal_source == "carrot":
+        if self.road_goal_source == "route":
+            goal = self._route_goal_candidate(rob_xy)
+            if goal is not None or len(self._route_xy) >= 2:
+                return goal  # a route is there: no silent fallback to the plain carrot
+        if self.road_goal_source in ("carrot", "route"):
             if self._latest_carrot is None:
                 return None
             return select_carrot_goal(
@@ -880,6 +919,56 @@ class RoadFollower(Node):
         pts = [self._pose_to_map(p) for p in self._latest_road_path.poses]
         pts = [p for p in pts if p is not None]
         return select_path_goal(pts, rob_xy, yaw, self.road_goal_min_ahead, self.road_goal_max_ahead)
+
+    def _route_goal_candidate(self, rob_xy):
+        """
+        ROAD goal from the planned route's shape (``road_goal_source: route``).
+
+        The carrot and the robot are projected on the route, the goal is put
+        ``route_stretch_distance`` further along it from whichever projects farther ahead, and
+        the carrot's lateral offset from the route is carried over to it. The route is used
+        relatively only: its absolute position carries the OSM error and the GNSS error (the
+        robot itself drove up to 5.5 m off the mapped centreline on 2026-09-08), and both
+        cancel out because the offset is re-measured against the same route every frame.
+        ``None`` when there is no route yet, or no usable carrot.
+        """
+        if len(self._route_xy) < 2:
+            return None
+        carrot = self._latest_carrot
+        if carrot is not None and self.road_goal_max_ahead > 0:
+            if math.hypot(carrot[0] - rob_xy[0], carrot[1] - rob_xy[1]) > self.road_goal_max_ahead:
+                carrot = None  # beyond the sensor range it can only be a projection artefact
+        if carrot is None and not self.route_goal_without_carrot:
+            return None
+        return select_route_goal(
+            carrot,
+            rob_xy,
+            self._route_xy,
+            self._route_cum,
+            self.current_waypoint_index,
+            stretch=self.route_stretch_distance,
+            min_ahead=self.road_goal_min_ahead,
+            max_ahead=self.road_goal_max_ahead,
+            lateral_limit=self._route_lateral_limit(rob_xy),
+            lateral_gain=self.route_lateral_gain,
+            max_turn=self.route_stretch_max_turn,
+            window=self.route_projection_window,
+        )
+
+    def _route_lateral_limit(self, rob_xy) -> float:
+        """
+        How far off the route the ``route`` goal may be placed: the same relative limit the
+        road-goal sanity check uses, so a robot driving 5 m off the mapped centreline (GNSS
+        under trees) may keep that offset instead of being pulled back onto the OSM line.
+        """
+        if self.road_goal_max_route_offset <= 0 or not self._route_a.size:
+            return 0.0  # 0 = no clamp
+        return route_offset_limit(
+            distance_to_polyline(rob_xy, self._route_a, self._route_b),
+            self.road_goal_max_route_offset,
+            self.road_goal_route_offset_margin,
+            self.road_goal_max_route_offset_hard,
+        )
 
     def _road_goal_needs_update(self, goal_xy) -> bool:
         if not self._goal_active or self._last_road_goal is None:
@@ -1057,6 +1146,10 @@ class RoadFollower(Node):
                 self.get_logger().info("Commander stopped during ROAD; re-sending the road goal.")
                 self._goal_active = False
                 self._send_road_goal()
+        if self.road_goal_source == "route" and self.route_goal_without_carrot:
+            # Nothing else drives the road input then: no carrot arrives, so tick it from here
+            # to keep the goal moving along the route and ROAD mode alive (road_path_timeout).
+            self._road_input()
         self._check_state_transitions(rob_xy)
 
     def _sync_waypoint_index_to_closest(self, rob_xy):
@@ -1567,8 +1660,14 @@ class RoadFollower(Node):
     def _road_goal_valid(self, goal_xy, quiet: bool = False) -> bool:
         """Sanity-check a road goal against the planned route and the robot heading."""
         pose = self._robot_pose() if (self.road_goal_max_route_offset > 0 or self.road_goal_reject_behind) else None
+        # The "route" goal sits on the route by construction, so the offset test would always
+        # pass; what it is there to catch -- a road detection that is not our road -- is the
+        # carrot, and that is what is measured instead.
+        checked, what = goal_xy, "goal"
+        if self.road_goal_source == "route" and self._latest_carrot is not None:
+            checked, what = self._latest_carrot, "carrot"
         if self.road_goal_max_route_offset > 0 and self._route_a.size:
-            off = distance_to_polyline(goal_xy, self._route_a, self._route_b)
+            off = distance_to_polyline(checked, self._route_a, self._route_b)
             off_robot = distance_to_polyline(pose[:2], self._route_a, self._route_b) if pose is not None else None
             limit = route_offset_limit(
                 off_robot, self.road_goal_max_route_offset,
@@ -1577,7 +1676,7 @@ class RoadFollower(Node):
             if off > limit:
                 if not quiet:
                     self.get_logger().warning(
-                        f"Road goal rejected: {off:.1f} m off the planned route "
+                        f"Road goal rejected: {what} {off:.1f} m off the planned route "
                         f"(> {limit:.1f} m; robot itself {off_robot if off_robot is None else round(off_robot, 1)} m off)",
                         throttle_duration_sec=2.0,
                     )
@@ -1607,7 +1706,8 @@ class RoadFollower(Node):
         pose_stamped.pose.orientation.w = math.cos(candidate[2] / 2.0)
         self.get_logger().info(
             f"Road goal ({self.road_goal_source}): ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) "
-            f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg",
+            f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg"
+            + self._road_goal_log_suffix(goal_xy),
             throttle_duration_sec=2.0,
         )
         self._goal_active = True
@@ -1624,6 +1724,19 @@ class RoadFollower(Node):
             goal_msg, feedback_callback=self._road_feedback_callback
         )
         self.send_goal_future.add_done_callback(self._goal_response_callback)
+
+    def _road_goal_log_suffix(self, goal_xy) -> str:
+        """``route`` source: how far ahead of the robot the goal is and how far off the route."""
+        pose = self._robot_pose()
+        if self.road_goal_source != "route" or pose is None or len(self._route_xy) < 2:
+            return ""
+        ahead = math.hypot(goal_xy[0] - pose[0], goal_xy[1] - pose[1])
+        proj = project_on_route(
+            self._route_xy, self._route_cum, goal_xy,
+            self.current_waypoint_index, self.route_projection_window,
+        )
+        lateral = f"{proj[1]:+.1f}" if proj is not None else "?"
+        return f" ({ahead:.1f} m ahead, {lateral} m off the route)"
 
     def _send_gps_goal(self):
         if self.state != self.STATE_GPS or not self.waypoints:

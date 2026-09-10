@@ -22,6 +22,9 @@ Scenarios
   f  nearby sequence waypoints      a waypoint inside the arrival box on selection wedges
                                     the commander without e3bb0e4 (S1, xfail) and advances
                                     with it
+  h  lagging carrot on a bend       road_goal_source=route drives the bend from the route's
+                                    shape, keeping the carrot's offset, where the plain
+                                    carrot would send goals backwards
 
 Run inside the container: ``bash demo/run_sm_test.sh`` (or pytest directly, with
 ``/opt/ros/jazzy`` and the workspace sourced). Without rclpy the whole module skips, so a
@@ -58,7 +61,7 @@ CONFIG = PKG / "config" / "road_and_gps_follower.yaml"
 MAP_FRAME = "FP_ENU0"
 EARTH_FRAME = "FP_ECEF"
 # One domain per scenario: the tests must not see each other, nor a bag replay on domain 0.
-DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49}
+DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49, "h": 50}
 SPEED = 3.0  # m/s of the simulated robot: keeps a 40 m scenario inside ~20 s
 
 pytestmark = pytest.mark.skipif(
@@ -149,10 +152,11 @@ def point_ahead(route, xy, ahead):
 class Observer(Node):
     """Everything the follower needs that is neither the commander nor the route file."""
 
-    def __init__(self, context, route, intersections=(), carrot_ahead=6.0):
+    def __init__(self, context, route, intersections=(), carrot_ahead=6.0, carrot_lateral=0.0):
         super().__init__("sm_observer", context=context)
         self.route = list(route)
         self.states, self.events, self.poses, self.status = [], [], [], []
+        self.road_goals = []  # (t, x, y) of every /goal_waypoint the follower sent
         self.pose = None
         self.t0 = time.time()
         latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -161,10 +165,12 @@ class Observer(Node):
         self.create_subscription(String, "/road_follower/event", self._event_cb, history)
         self.create_subscription(String, "/fake_commander/status", self._status_cb, 10)
         self.create_subscription(PoseStamped, "/fake_commander/pose", self._pose_cb, 10)
+        self.create_subscription(PoseStamped, "/goal_waypoint", self._road_goal_cb, history)
         self.pub_carrot = self.create_publisher(Marker, "/cloud_hull_center_marker", 10)
         self.pub_inter = self.create_publisher(PoseArray, "/intersections", latched)
         self.pub_qr = self.create_publisher(GeoPointStamped, "/qr_goal/goal", latched)
         self.carrot_ahead = carrot_ahead
+        self.carrot_lateral = carrot_lateral
         self.create_timer(0.1, self._publish_carrot)
         self._publish_intersections(intersections)
 
@@ -187,6 +193,9 @@ class Observer(Node):
         self.pose = (msg.pose.position.x, msg.pose.position.y, yaw)
         self.poses.append((round(self.t(), 1),) + self.pose)
 
+    def _road_goal_cb(self, msg):
+        self.road_goals.append((round(self.t(), 1), msg.pose.position.x, msg.pose.position.y))
+
     # ---- stimuli
     def _publish_intersections(self, points):
         msg = PoseArray()
@@ -203,6 +212,14 @@ class Observer(Node):
         if self.pose is None:
             return
         x, y = point_ahead(self.route, self.pose[:2], self.carrot_ahead)
+        if self.carrot_lateral:
+            # The real drivable centre is not the mapped line: offset the carrot to the left
+            # of the route direction, the way an OSM or GNSS error shifts it in the field.
+            nx, ny = point_ahead(self.route, self.pose[:2], self.carrot_ahead + 0.5)
+            dx, dy = nx - x, ny - y
+            d = math.hypot(dx, dy)
+            if d > 1e-6:
+                x, y = x - self.carrot_lateral * dy / d, y + self.carrot_lateral * dx / d
         m = Marker()
         m.header.frame_id = MAP_FRAME
         m.header.stamp = self.get_clock().now().to_msg()
@@ -272,7 +289,8 @@ class Rig:
     """Fake commander + follower subprocesses and an in-process observer, on one domain."""
 
     def __init__(self, domain, route, tmp_path, fake_env=None, follower_params=None,
-                 intersections=(), start_follower=True, plan_route=None, mission=False):
+                 intersections=(), start_follower=True, plan_route=None, mission=False,
+                 carrot_ahead=6.0, carrot_lateral=0.0):
         self.domain = domain
         self.procs = []
         self.log_dir = tmp_path
@@ -293,7 +311,9 @@ class Rig:
 
         self.context = rclpy.Context()
         rclpy.init(context=self.context, domain_id=domain)
-        self.observer = Observer(self.context, self.route, intersections)
+        self.observer = Observer(
+            self.context, self.route, intersections, carrot_ahead, carrot_lateral
+        )
         self.executor = SingleThreadedExecutor(context=self.context)
         self.executor.add_node(self.observer)
         # plan_route: True = a planner that answers with the route; a string = a planner
@@ -466,6 +486,17 @@ def gps_episode(r, node, radius=9.0):
         default=0,
     )
     return ev[i_start : i_end + 1]
+
+
+def distance_to_route(route, xy):
+    """Distance from ``xy`` to the route polyline (segments, not just the vertices)."""
+    best = float("inf")
+    for a, b in zip(route, route[1:]):
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        den = vx * vx + vy * vy
+        t = 0.0 if den == 0 else max(0.0, min(1.0, ((xy[0] - a[0]) * vx + (xy[1] - a[1]) * vy) / den))
+        best = min(best, math.hypot(a[0] + vx * t - xy[0], a[1] + vy * t - xy[1]))
+    return best
 
 
 def call_kinds(events):
@@ -716,3 +747,41 @@ def test_g_unsnappable_goal_is_not_retried(rig):
     names = [s for s in r.observer.state_names()]
     assert "ROAD" not in names and "GPS" not in names, r.report()
 
+
+def test_h_route_source_drives_a_bend_with_a_lagging_carrot(rig):
+    """
+    ``road_goal_source: route``: the hull centre lags the robot (the accumulated centre of
+    what the lidar has seen, 1 m *behind* it here) and sits 2 m off the mapped line. The
+    plain carrot source would send goals backwards from the robot -- rejected as "behind",
+    ROAD kept alive by nothing, GPS:no_road -- while stretching along the route drives the
+    90 deg bend and keeps the 2 m offset the perception measured.
+    """
+    route = densify([(0, 0), (30, 0), (30, 30)])
+    r = rig(
+        domain=DOMAIN["h"],
+        route=route,
+        carrot_ahead=-1.0,
+        carrot_lateral=2.0,
+        follower_params={"road_goal_source": "route", "final_approach_distance": 8.0},
+    )
+    wait_state(r, "ROAD", 30)
+    # A file route has no mission goal, so there is no ARRIVED state (scenario e covers that):
+    # the end of the drive is the robot itself reaching the last waypoint.
+    r.require(
+        lambda: r.observer.pose is not None
+        and math.hypot(r.observer.pose[0] - route[-1][0], r.observer.pose[1] - route[-1][1]) < 4.0,
+        90,
+        "the robot at the end of the route",
+    )
+
+    assert not any(s.startswith("GPS:no_road") for s in r.observer.state_names()), r.report()
+    goals = r.observer.road_goals
+    assert len(goals) >= 5, f"only {len(goals)} road goals\n{r.report()}"
+    offsets = sorted(distance_to_route(route, (x, y)) for _, x, y in goals)
+    median = offsets[len(offsets) // 2]
+    # The carrot's own 2 m offset, carried over; never pulled back onto the mapped line and
+    # never thrown off it by the bend.
+    assert 1.0 <= median <= 3.0, f"median goal offset {median:.1f} m\n{offsets}\n{r.report()}"
+    assert offsets[-1] <= 4.0, f"a goal {offsets[-1]:.1f} m off the route\n{r.report()}"
+    # The bend was driven from the route's shape: goals appear on the northbound leg.
+    assert any(y > 2.0 and x > 25.0 for _, x, y in goals), f"{goals}\n{r.report()}"
