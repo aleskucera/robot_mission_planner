@@ -25,6 +25,10 @@ Scenarios
   h  lagging carrot on a bend       road_goal_source=route drives the bend from the route's
                                     shape, keeping the carrot's offset, where the plain
                                     carrot would send goals backwards
+  i  mode gps                       the route is driven as one sequence, the road is never
+                                    looked at and the follower never leaves the GPS state
+  j  mode road                      road goals with no route at all: no GPS state, no
+                                    intersections, no arrival
 
 Run inside the container: ``bash demo/run_sm_test.sh`` (or pytest directly, with
 ``/opt/ros/jazzy`` and the workspace sourced). Without rclpy the whole module skips, so a
@@ -57,11 +61,12 @@ PKG = Path(__file__).resolve().parents[1]
 DEMO = WS / "demo"
 FAKE = DEMO / "fake_commander.py"
 STATIC_TF = DEMO / "static_tf_2026-09-08.json"
-CONFIG = PKG / "config" / "road_and_gps_follower.yaml"
+CONFIG = PKG / "config" / "follower.yaml"
 MAP_FRAME = "FP_ENU0"
 EARTH_FRAME = "FP_ECEF"
 # One domain per scenario: the tests must not see each other, nor a bag replay on domain 0.
-DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49, "h": 50}
+DOMAIN = {"a": 42, "b": 43, "c": 44, "d": 45, "e": 46, "f0": 47, "f1": 48, "g": 49, "h": 50,
+          "i": 51, "j": 52}
 SPEED = 3.0  # m/s of the simulated robot: keeps a 40 m scenario inside ~20 s
 
 pytestmark = pytest.mark.skipif(
@@ -785,3 +790,41 @@ def test_h_route_source_drives_a_bend_with_a_lagging_carrot(rig):
     assert offsets[-1] <= 4.0, f"a goal {offsets[-1]:.1f} m off the route\n{r.report()}"
     # The bend was driven from the route's shape: goals appear on the northbound leg.
     assert any(y > 2.0 and x > 25.0 for _, x, y in goals), f"{goals}\n{r.report()}"
+
+
+def test_i_mode_gps_drives_the_route_without_the_road(rig):
+    """mode: gps -- the whole leg is the route's waypoints; the road is never subscribed."""
+    route = densify([(0, 0), (48, 0)])
+    r = rig(domain=DOMAIN["i"], route=route, follower_params={"mode": "gps"})
+    wait_state(r, "GPS", 30)
+    r.require(
+        lambda: r.observer.pose is not None and r.observer.pose[0] > 40.0,
+        90,
+        "the robot at the end of the route",
+    )
+
+    names = r.observer.state_names()
+    assert set(names) == {"GPS:route"}, f"{names}\n{r.report()}"
+    kinds = call_kinds(r.fake_events())
+    assert ("switch_mode", "goto") not in kinds, f"a road goal in mode gps: {kinds}"
+    assert sum(1 for k in kinds if k[0] == "goal_sequence") >= 1, kinds
+    assert not r.observer.road_goals, f"road goals in mode gps: {r.observer.road_goals}"
+
+
+def test_j_mode_road_drives_without_a_route(rig):
+    """mode: road -- carrots only, no route to load, no GPS state to fall back to."""
+    route = densify([(0, 0), (40, 0)])  # the shape of the road, known to the test only
+    r = rig(domain=DOMAIN["j"], route=route, mission=True, follower_params={"mode": "road"})
+    wait_state(r, "ROAD", 30)
+    r.require(
+        lambda: r.observer.pose is not None and r.observer.pose[0] > 20.0,
+        90,
+        "the robot 20 m down the road",
+    )
+
+    names = r.observer.state_names()
+    assert set(names) == {"ROAD"}, f"{names}\n{r.report()}"
+    kinds = call_kinds(r.fake_events())
+    assert ("switch_mode", "goto") in kinds, kinds
+    assert not [k for k in kinds if k[0] == "goal_sequence"], f"a sequence in mode road: {kinds}"
+    assert len(r.observer.road_goals) >= 5, r.report()

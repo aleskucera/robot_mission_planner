@@ -14,6 +14,8 @@ setup(
         (os.path.join("share", package_name, "launch"), glob(os.path.join("launch", "*.launch"))),
         (os.path.join("share", package_name, "launch"), glob(os.path.join("launch", "*.py"))),
         (os.path.join("share", package_name, "config"), glob(os.path.join("config", "*.yaml"))),
+        (os.path.join("share", package_name, "config", "modes"),
+         glob(os.path.join("config", "modes", "*.yaml"))),
         (os.path.join("share", package_name, "data"), glob(os.path.join("data", "*.gpx"))),
         (os.path.join("share", package_name, "data"), glob(os.path.join("data", "*.yaml"))),
         (os.path.join("share", package_name, "rviz"), glob(os.path.join("rviz", "*.rviz"))),
@@ -26,9 +28,11 @@ setup(
  license='BSD-3-Clause',
  entry_points={
      'console_scripts': [
-             'gps_follower_ros2 = robot_mission_planner.gps_follower_ros2:main',
+             # One follower, three modes (mode: road_gps | gps | road). The two aliases
+             # start it in a mode directly, under the names the old separate nodes had.
              'road_follower = robot_mission_planner.road_follower:main',
-             'road_follower_simple = robot_mission_planner.road_follower_simple:main',
+             'gps_follower = robot_mission_planner.road_follower:main_gps',
+             'road_follower_simple = robot_mission_planner.road_follower:main_road',
              'qr_goal = robot_mission_planner.qr_goal:main',
              'mission_hud = robot_mission_planner.mission_hud:main',
              'mission_signal = robot_mission_planner.mission_signal:main',

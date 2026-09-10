@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-Road follower with GPS fallback at intersections.
+The follower: it drives the robot along a road, along a route, or both.
+
+Modes (``mode``, see ``follower/modes.py``)
+------------------------------------------
+road_gps : follow the detected road and hand over to the route's waypoints around OSM
+           intersections, when the road detection drops out, when the commander reports
+           being stuck, and for the final metres to the goal. The Robotour mode.
+gps      : follow the route's waypoints from beginning to end, never look at the road.
+road     : follow the road only -- no route, no intersections, no goal to arrive at.
+
+The route of the two route modes is either a GPX/YAML file (``file``) or planned by
+route_planner from a mission goal (a QR code); that is a separate choice, not a mode.
 
 State machine
 -------------
@@ -21,14 +32,16 @@ GPS   : follow the pre-planned GPX waypoints instead. Entered near an OSM inters
         the road path stops arriving (``road_path_timeout``) or when the commander reports
         being stuck (``stuck_fallback_to_gps``).
 
-Navigation backends (``nav_backend``)
--------------------------------------
-commander : the Helhest field stack (crl_commander on the NUC). ROAD goals are published
-            as a PoseStamped on ``goal_waypoint_topic`` in *goto* mode; GPS waypoints are
-            published as a latched PoseArray on ``goal_sequence_topic`` (in ``earth_frame``,
-            ECEF) and the commander is switched to *sequence* mode.
-nav2      : Nav2 ``NavigateToPose`` / ``FollowWaypoints`` (``FollowGPSWaypoints`` when
-            ``use_utm`` is false).
+Navigation backends (``nav_backend``, see ``follower/backends/``)
+----------------------------------------------------------------
+commander   : the Helhest field stack (crl_commander on the NUC). ROAD goals are published
+              as a PoseStamped on ``goal_waypoint_topic`` in *goto* mode; GPS waypoints are
+              published as a latched PoseArray on ``goal_sequence_topic`` (in ``earth_frame``,
+              ECEF) and the commander is switched to *sequence* mode.
+nav2        : Nav2 ``NavigateToPose`` / ``FollowWaypoints`` (``FollowGPSWaypoints`` when
+              ``use_utm`` is false).
+follow_path : a bare pure-pursuit controller (``path_follower``): each goal becomes a short
+              path from the robot to it. No waypoint sequence, so ``mode: road`` only.
 
 Frames
 ------
@@ -59,6 +72,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
+from robot_mission_planner.follower import modes
 from robot_mission_planner.follower.backends import KINDS as BACKEND_KINDS, make_backend
 from robot_mission_planner.follower.frames import (
     Frames,
@@ -83,6 +97,7 @@ from robot_mission_planner.follower.route import Route, load_waypoints, resolve_
 GPS_REASON_INTERSECTION = "intersection"
 GPS_REASON_NO_ROAD = "no_road"
 GPS_REASON_STUCK = "stuck"
+GPS_REASON_ROUTE = "route"  # mode gps: the whole leg is driven on the route's waypoints
 GPS_REASON_FINAL = "final"  # last metres to the goal: GPS all the way in, never back to ROAD
 
 # sensor_msgs/NavSatStatus.status -> the suffix the follower appends to its state (F8).
@@ -105,11 +120,16 @@ class RoadFollower(Node):
     STATE_PLANNING = 3  # mission: route requested from route_planner / start pause
     STATE_ARRIVED = 4  # mission: at the goal, commander stopped
 
-    def __init__(self):
+    def __init__(self, default_mode: str = "road_gps"):
         super().__init__("road_follower")
 
         self.state = self.STATE_ROAD
         self._active_intersection = None
+
+        # --- Mode ---
+        # road_gps: road following with GPS waypoints at intersections; gps: the route only;
+        # road: the road only, with no route at all.
+        self.declare_parameter("mode", default_mode)
 
         # --- Backend ---
         # "commander" (crl_commander on the NUC), "nav2" (NavigateToPose + FollowWaypoints)
@@ -271,6 +291,11 @@ class RoadFollower(Node):
         self.declare_parameter("pending_goal_min_distance", 2.0)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
+        try:
+            self.mode = modes.get(str(gp("mode")))
+        except KeyError as e:
+            self.get_logger().error(f"{e}; using 'road_gps'")
+            self.mode = modes.ROAD_GPS
         self.nav_backend = gp("nav_backend")
         if self.nav_backend not in BACKEND_KINDS:
             self.get_logger().error(
@@ -381,6 +406,16 @@ class RoadFollower(Node):
             self.backend.on_sequence_succeeded = self._sequence_succeeded
         self.backend.on_goal_inactive = self._backend_goal_inactive
         self.backend.on_waypoint_reached = self._backend_waypoint_reached
+        if self.mode.route and not self.backend.supports_sequence:
+            self.get_logger().error(
+                f"nav_backend '{self.nav_backend}' cannot drive a waypoint sequence, which "
+                f"mode {self.mode.name} needs: use mode road, or another backend."
+            )
+        if not self.mode.route and self.road_goal_source == "route":
+            self.get_logger().warning(
+                f"road_goal_source 'route' needs a planned route, which mode {self.mode.name} "
+                "does not have: falling back to the plain carrot."
+            )
 
         self._waypoint_marker_scale = float(gp("waypoint_marker_scale"))
         self._marker_pub = self.create_publisher(MarkerArray, gp("markers_topic"), 10)
@@ -399,11 +434,15 @@ class RoadFollower(Node):
         self.route.index = self.start_index
         self.waypoints = []  # backend goal messages (PoseStamped in src frame, or GeoPose)
         self.gps_path = ""
-        file_points = self._load_gps_data()
+        file_points = self._load_gps_data() if self.mode.route else []
         if file_points:
             self._set_route(file_points, f"file {self.gps_path}")
-        else:
-            self.state = self.STATE_IDLE
+            if not self.mode.road:
+                # Nothing else to drive: the route from the start (the reason is set with the
+                # rest of the runtime state below).
+                self.state = self.STATE_GPS
+        elif self.mode.route:
+            self.state = self.STATE_IDLE  # mission: wait for a goal to plan a route to
 
         if self._geo_goals:
             self._process_waypoints()  # lat/lon goals, no transform needed
@@ -422,7 +461,8 @@ class RoadFollower(Node):
         self._pending_goal_timer = None
         self._gps_start_index = 0
         self.route.synced = False  # first sync searches the whole list
-        self._gps_reason = None  # why GPS mode was entered
+        # Why GPS mode was entered; mode gps starts in it (see the waypoints section above).
+        self._gps_reason = GPS_REASON_ROUTE if self.state == self.STATE_GPS else None
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
         self._gps_route_dir = None  # unit route direction leaving the active intersection
         self._gps_node_index = None  # route waypoint nearest to the active intersection
@@ -446,14 +486,16 @@ class RoadFollower(Node):
         self.data = {"robot_id": self.robot_id}
 
         # --- Subscriptions ---
-        if self.road_goal_source == "path":
-            self.create_subscription(Path, gp("road_points_topic"), self._path_callback, 10)
-        else:
-            carrot_msg = Path if self.carrot_type == "path" else Marker
-            self.create_subscription(carrot_msg, gp("carrot_topic"), self._carrot_callback, 10)
-        self.create_subscription(
-            PoseArray, gp("intersections_topic"), self._intersections_callback, latched
-        )
+        if self.mode.road:
+            if self.road_goal_source == "path":
+                self.create_subscription(Path, gp("road_points_topic"), self._path_callback, 10)
+            else:
+                carrot_msg = Path if self.carrot_type == "path" else Marker
+                self.create_subscription(carrot_msg, gp("carrot_topic"), self._carrot_callback, 10)
+        if self.mode.switching:
+            self.create_subscription(
+                PoseArray, gp("intersections_topic"), self._intersections_callback, latched
+            )
         if gp("gps_fix_topic"):
             self.create_subscription(
                 NavSatFix, gp("gps_fix_topic"), self._gps_callback, qos_profile_sensor_data
@@ -462,7 +504,7 @@ class RoadFollower(Node):
             self.create_subscription(
                 NavSatFix, gp("gps_filtered_topic"), self._ekf_callback, qos_profile_sensor_data
             )
-        if gp("qr_goal_topic"):
+        if gp("qr_goal_topic") and self.mode.mission:
             self.create_subscription(
                 GeoPointStamped, gp("qr_goal_topic"), self._qr_goal_callback, latched
             )
@@ -488,7 +530,8 @@ class RoadFollower(Node):
                 )
 
         self.get_logger().info(
-            f"Road follower initialised (backend={self.nav_backend}, map_frame={self.map_frame}, "
+            f"Follower initialised in mode {self.mode.name} ({self.mode.description}).\n"
+            f"(backend={self.nav_backend}, map_frame={self.map_frame}, "
             f"robot_frame={self.robot_frame}, waypoint frame={self.waypoint_src_frame}).\n"
             f"Road goal: {self.road_goal_source} "
             f"({gp('road_points_topic') if self.road_goal_source == 'path' else gp('carrot_topic')}), "
@@ -972,6 +1015,10 @@ class RoadFollower(Node):
                 self._send_gps_goal()
             else:
                 self._send_road_goal()
+        elif not self.mode.switching and self.state == self.STATE_GPS and not self._goal_active:
+            # Nothing hands over to this state and back in the route-only mode, so the tick
+            # is what starts the first sequence and picks it up again after a backend stop.
+            self._send_gps_goal()
         elif self.backend.left_us(self._goal_active):
             if self.state == self.STATE_GPS:
                 # The sequence window (gps_sequence_window) was consumed: send the next one.
@@ -1055,6 +1102,8 @@ class RoadFollower(Node):
         return float("inf"), None
 
     def _check_state_transitions(self, rob_xy):
+        if not self.mode.switching:
+            return  # gps and road drive one way from beginning to end
         if self.state not in (self.STATE_ROAD, self.STATE_GPS):
             return
         closest, closest_xy = self._closest_intersection(rob_xy)
@@ -1408,7 +1457,14 @@ class RoadFollower(Node):
         if self.state != self.STATE_PLANNING:
             return
         self._event("START")
-        self._enter_road("Mission start")
+        self._enter_driving("Mission start")
+
+    def _enter_driving(self, why: str):
+        """Enter the state this mode drives in: ROAD, or GPS where there is no road following."""
+        if self.mode.road:
+            self._enter_road(why)
+        else:
+            self._enter_gps(GPS_REASON_ROUTE, None, why)
 
     def _enter_arrived(self, rob_xy):
         d = math.hypot(rob_xy[0] - self.waypoints_map[-1][0], rob_xy[1] - self.waypoints_map[-1][1])
@@ -1594,9 +1650,9 @@ class RoadFollower(Node):
             pass
 
 
-def main():
+def main(default_mode: str = "road_gps"):
     rclpy.init()
-    node = RoadFollower()
+    node = RoadFollower(default_mode)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
@@ -1605,6 +1661,16 @@ def main():
         node.save_waypoint_index()
         node.destroy_node()
         rclpy.try_shutdown()
+
+
+def main_road():
+    """``ros2 run robot_mission_planner road_follower_simple``: the follower in mode road."""
+    main("road")
+
+
+def main_gps():
+    """``ros2 run robot_mission_planner gps_follower``: the follower in mode gps."""
+    main("gps")
 
 
 if __name__ == "__main__":

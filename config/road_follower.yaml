@@ -1,6 +1,0 @@
-# road_follower (road_follower.launch): road following only, no intersections and no GPS.
-# For the full mission node see config/road_and_gps_follower.yaml.
-/**:
-  ros__parameters:
-    road_points_topic: "/map_hull_center_path"   # topic publishing a PoseArray of road points
-    distance_threshold: 0.5                      # m to the goal at which a new goal is requested

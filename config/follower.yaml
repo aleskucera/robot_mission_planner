@@ -1,12 +1,23 @@
-# road_follower (road_and_gps_follower.launch): road following with GPS/mission fallback.
-# Everything the node reads lives here; the launch file only picks the file and the few
-# arguments that are switched from the command line (gps_file, nav_backend,
-# road_goal_source, carrot_topic).
+# The follower (follower.launch): every parameter it reads, for all three modes.
+# The per-mode overlay in config/modes/<mode>.yaml is loaded on top of this file and only
+# names what that mode changes; the launch file adds the few arguments that are switched
+# from the command line (mode, gps_file, nav_backend, road_goal_source, carrot_topic).
 /**:
   ros__parameters:
-    # Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2"
+    # What the follower does (config/modes/<mode>.yaml sets this; here for completeness):
+    #   road_gps  follow the road, hand over to the route at intersections, when the road
+    #             is lost, when the commander is stuck and for the final approach
+    #   gps       follow the route's waypoints only, never look at the road
+    #   road      follow the road only: no route, no intersections, no goal
+    mode: "road_gps"
+
+    # Navigation backend: "commander" (crl_commander on the Helhest NUC), "nav2"
+    # (NavigateToPose + FollowWaypoints) or "follow_path" (a bare pure-pursuit controller,
+    # usable in mode road only -- it has no notion of a waypoint sequence).
     nav_backend: "commander"
     use_utm: true                       # nav2 only: UTM goals vs lat/lon goals
+    follow_path_action: "follow_path"   # follow_path only: the nav2 FollowPath action
+    follow_path_spacing: 0.25           # follow_path only: m between the synthetic path poses
 
     # Frames (Helhest/Fixposition defaults). map_frame is the fixed frame all distances are
     # measured in; earth_frame is the ECEF frame GPX waypoints are published in.
@@ -38,7 +49,8 @@
 
     # Route file: GPX or YAML with the pre-planned waypoints (absolute, or relative to
     # robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only").
-    # Empty = mission mode: wait for QR goals. Overridden by the gps_file launch argument.
+    # Empty = mission mode: wait for QR goals (modes road_gps and gps). Overridden by the
+    # gps_file launch argument, ignored in mode road.
     file: ""
     robot_id: "helhest-robot"
     start: 0                            # start index of the waypoints

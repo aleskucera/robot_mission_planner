@@ -1,11 +1,28 @@
 # robot_mission_planner
 
-ROS 2 nodes that drive a robot along a mission made of GPS waypoints, optionally switching
-between visual road following and the pre-planned GPX path at intersections.
+ROS 2 nodes that drive a robot along a mission: visual road following, a route of GPS
+waypoints, or both, switching between them at intersections.
 
 ## Nodes
 
-### `road_follower` — road following with GPS fallback at intersections
+### `road_follower` — the follower, in one of three modes
+
+One node does the driving. What it uses is the `mode` parameter:
+
+| `mode` | what drives the robot | route | intersections |
+|---|---|---|---|
+| `road_gps` (default) | the detected road, with the route's waypoints at intersections, when the road is lost, when the commander is stuck and for the final approach | needed | yes |
+| `gps` | the route's waypoints, from beginning to end | needed | — |
+| `road` | the detected road only, with no goal to arrive at | none | — |
+
+The route of the two route modes is a GPX/YAML file (`file`, the `gps_file` launch
+argument) or is planned by `route_planner` from a QR goal — that is a separate choice, not a
+mode. Modes share everything below them: the frames and transforms
+(`follower/frames.py`), the route and what is derived from it (`follower/route.py`), the
+road-goal geometry (`follower/road_goal.py`) and the navigation backend
+(`follower/backends/`, `commander` | `nav2` | `follow_path`).
+
+The mode descriptions below are for `road_gps`, the one the Robotour mission uses.
 
 ```
 map_data/osm_cloud ──/intersections (PoseArray)──┐
@@ -113,31 +130,41 @@ Frames are parameters: `map_frame` (fixed frame all distances are measured in, `
 The `crl_commander` service types come from the real package on the robot; a dev workspace
 uses the interface-only stub in `src/crl_commander`.
 
-### `gps_follower_ros2` — plain GPX/YAML waypoint following through Nav2 (legacy)
-
-Telemetry POSTs are disabled in both nodes unless `telemetry_url` is set.
+Telemetry POSTs are disabled unless `telemetry_url` is set.
 
 ## Launch
 
 ```bash
-ros2 launch robot_mission_planner road_and_gps_follower.launch \
-    gps_file:=stromovka_planned.gpx nav_backend:=commander
-# predicted-path goal instead of the carrot:
-ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=path
+# the Robotour mission: QR goal -> planned route -> road following with GPS at intersections
+ros2 launch robot_mission_planner follower.launch.py mode:=road_gps
 
-# or the carrot stretched along the planned OSM route:
-ros2 launch robot_mission_planner road_and_gps_follower.launch road_goal_source:=route
-# a whole different parameter set:
-ros2 launch robot_mission_planner road_and_gps_follower.launch config:=/path/to/my.yaml
+# a file route, waypoints only
+ros2 launch robot_mission_planner follower.launch.py mode:=gps gps_file:=stromovka_planned.gpx
+
+# road following alone, through the pure-pursuit controller instead of the commander
+ros2 launch robot_mission_planner follower.launch.py mode:=road nav_backend:=follow_path
+
+# the goal from the predicted path, or from the carrot stretched along the planned route
+ros2 launch robot_mission_planner follower.launch.py road_goal_source:=path
+ros2 launch robot_mission_planner follower.launch.py road_goal_source:=route
+
+# a whole different parameter set
+ros2 launch robot_mission_planner follower.launch.py config:=/path/to/my.yaml
 ```
 
-Never run `road_follower_simple` at the same time: the commander sends an empty path to
-`path_follower` whenever it has no goal, so two clients of `/follow_path` fight each other.
+`road_and_gps_follower.launch`, `gps_follower.launch` and `road_follower_simple.launch` are
+kept as thin wrappers for `mode:=road_gps`, `mode:=gps` and `mode:=road`, so the robot's tmux
+sessions and the replay scripts do not have to change; `ros2 run robot_mission_planner
+gps_follower` / `road_follower_simple` start the same node in those modes.
 
-All frames, topics, services and thresholds are parameters and live in
-`config/road_and_gps_follower.yaml` (one config file per launch file in `config/`); the launch
-files only pick the file and pass through the few arguments above. `gps_file` is absolute or
-relative to `data/`.
+Every parameter lives in **`config/follower.yaml`** — that is the file to edit.
+`config/modes/<mode>.yaml` is loaded on top of it and names only what the mode changes; the
+launch arguments above override both, and each is applied only when given, so editing the
+YAML is enough. `gps_file` is absolute or relative to `data/`.
+
+In `mode: road` with `nav_backend: follow_path`, nothing else may drive `/follow_path` at the
+same time: the commander sends an empty path there whenever it has no goal, so two clients
+fight each other.
 
 ## Producing the mission GPX
 
@@ -258,3 +285,9 @@ python3 rviz/make_layout.py --write robotour.rviz
 ```bash
 PYTHONPATH=. python -m pytest tests   # pure-geometry tests, no ROS needed
 ```
+
+Inside the container (`runros`), with the workspace sourced, the same command also runs the
+scripted state-machine scenarios (`tests/test_follower_sm.py`, one per mode among them)
+against `demo/fake_commander.py`; `demo/run_sm_test.sh` is the shortcut. `demo/run_bag_test.sh`
+replays a field bag through the whole pipeline and `demo/diff_probe.py` compares the result
+with a recorded baseline, which is what a refactor of the follower has to leave unchanged.

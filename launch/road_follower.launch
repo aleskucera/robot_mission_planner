@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<launch>
-  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/road_follower.yaml" />
-
-  <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" namespace="">
-      <param from="$(var config)" />
-  </node>
-</launch>

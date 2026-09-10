@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Plain road following: road-centre point/path straight into the controller.
-     No intersections, no GPS - for that use road_and_gps_follower.launch.
-     Goal mode, topics and distances live in the config file. -->
 <launch>
-  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/road_follower_simple.yaml" />
+  <!-- Plain road following: the follower in its road mode (no route, no intersections).
+       Kept as the name the old road_follower_simple node was launched under. -->
+  <arg name="nav_backend" default="" />
+  <arg name="road_goal_source" default="" />
+  <arg name="carrot_topic" default="" />
 
-  <node pkg="robot_mission_planner" exec="road_follower_simple" name="road_follower_simple" output="screen">
-      <param from="$(var config)" />
-  </node>
+  <include file="$(find-pkg-share robot_mission_planner)/launch/follower.launch.py">
+    <arg name="mode" value="road" />
+    <arg name="nav_backend" value="$(var nav_backend)" />
+    <arg name="road_goal_source" value="$(var road_goal_source)" />
+    <arg name="carrot_topic" value="$(var carrot_topic)" />
+  </include>
 </launch>

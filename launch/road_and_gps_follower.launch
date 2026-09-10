@@ -1,27 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- All frames, topics, services and thresholds live in the config file; the arguments
-       below are the ones that are switched from the command line and override it. -->
-  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/road_and_gps_follower.yaml" />
-
-  <!-- Path to the GPX or YAML file with the pre-planned waypoints (absolute, or relative to
-       robot_mission_planner/data). Produce it with the map_data viewer planner ("Paths only").
-       Empty = mission mode: wait for QR goals. -->
+  <!-- Kept for the robot's tmux sessions and the replay scripts: the follower in its
+       road_gps mode. New setups should use follower.launch.py directly. -->
   <arg name="gps_file" default="" />
+  <arg name="nav_backend" default="" />
+  <arg name="road_goal_source" default="" />
+  <arg name="carrot_topic" default="" />
+  <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/follower.yaml" />
 
-  <!-- Navigation backend: "commander" (crl_commander on the Helhest NUC) or "nav2" -->
-  <arg name="nav_backend" default="commander" />
-
-  <!-- Road goal source: carrot (convex-hull centre of the road points, carrot_topic) or
-       path (the fitted /predicted_path_ls from path_predictor). -->
-  <arg name="road_goal_source" default="carrot" />
-  <arg name="carrot_topic" default="/cloud_hull_center_marker" />
-
-  <node pkg="robot_mission_planner" exec="road_follower" name="road_follower" output="screen">
-      <param from="$(var config)" />
-      <param name="file" value="$(var gps_file)" />
-      <param name="nav_backend" value="$(var nav_backend)" />
-      <param name="road_goal_source" value="$(var road_goal_source)" />
-      <param name="carrot_topic" value="$(var carrot_topic)" />
-  </node>
+  <include file="$(find-pkg-share robot_mission_planner)/launch/follower.launch.py">
+    <arg name="mode" value="road_gps" />
+    <arg name="config" value="$(var config)" />
+    <arg name="gps_file" value="$(var gps_file)" />
+    <arg name="nav_backend" value="$(var nav_backend)" />
+    <arg name="road_goal_source" value="$(var road_goal_source)" />
+    <arg name="carrot_topic" value="$(var carrot_topic)" />
+  </include>
 </launch>
