@@ -66,12 +66,28 @@ def generate_launch_description():
     share = get_package_share_directory("robot_mission_planner")
     return LaunchDescription(
         [
-            DeclareLaunchArgument("mode", default_value="road_gps", description="road_gps | gps | road"),
-            DeclareLaunchArgument("config", default_value=os.path.join(share, "config", "follower.yaml")),
-            DeclareLaunchArgument("mode_config", default_value="", description="config/modes/<mode>.yaml"),
-            DeclareLaunchArgument("gps_file", default_value="", description="GPX/YAML route file"),
-            DeclareLaunchArgument("nav_backend", default_value="", description="commander | nav2 | follow_path"),
-            DeclareLaunchArgument("road_goal_source", default_value="", description="carrot | path | route"),
+            DeclareLaunchArgument(
+                "mode", default_value="road_gps", description="road_gps | gps | road"
+            ),
+            DeclareLaunchArgument(
+                "config", default_value=os.path.join(share, "config", "follower.yaml")
+            ),
+            DeclareLaunchArgument(
+                "mode_config", default_value="", description="config/modes/<mode>.yaml"
+            ),
+            DeclareLaunchArgument(
+                "gps_file", default_value="", description="GPX/YAML route file"
+            ),
+            DeclareLaunchArgument(
+                "nav_backend",
+                default_value="",
+                description="commander | nav2 | follow_path",
+            ),
+            DeclareLaunchArgument(
+                "road_goal_source",
+                default_value="",
+                description="carrot | path | route",
+            ),
             DeclareLaunchArgument("carrot_topic", default_value=""),
             DeclareLaunchArgument("node_name", default_value="road_follower"),
             OpaqueFunction(function=launch_setup),

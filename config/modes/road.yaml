@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     mode: "road"
-    file: ""                          # a route file is ignored in this mode
+    file: "" # a route file is ignored in this mode
     # No route to measure against: the road goal cannot be checked for being off it, and
     # "route" as the goal source falls back to the plain carrot.
     road_goal_source: "carrot"

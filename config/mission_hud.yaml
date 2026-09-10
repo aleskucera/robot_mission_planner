@@ -21,12 +21,12 @@
     # Panel look. Sizes are in pixels of the 3D render panel.
     text_size: 12.0
     panel_width: 620
-    panel_max_chars: 60             # lines are truncated rather than wrapped
+    panel_max_chars: 60 # lines are truncated rather than wrapped
     panel_margin: 8
     panel_bg_alpha: 0.55
     font: "DejaVu Sans Mono"
-    markup: true                    # false if a future rviz build draws the markup verbatim
-    rate: 4.0                       # Hz
+    markup: true # false if a future rviz build draws the markup verbatim
+    rate: 4.0 # Hz
     # Last line of the mission panel: how the operator intervenes. The NUC robotour tmux
     # session keeps the abort service call in the history of the follower window's second
     # pane; showing the next QR code is the continue signal. "" = no line.

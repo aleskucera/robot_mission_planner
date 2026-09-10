@@ -41,17 +41,24 @@ def generate_launch_description():
     default_params = os.path.join(share, "config", "mission_hud.yaml")
 
     args = [
-        DeclareLaunchArgument("config", default_value=default_config,
-                              description="rviz config file"),
-        DeclareLaunchArgument("params", default_value=default_params,
-                              description="mission_hud parameter file"),
+        DeclareLaunchArgument(
+            "config", default_value=default_config, description="rviz config file"
+        ),
+        DeclareLaunchArgument(
+            "params",
+            default_value=default_params,
+            description="mission_hud parameter file",
+        ),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("hud", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         # The Helhest URDF, for the RobotModel display: off, the robot publishes it.
         DeclareLaunchArgument("description", default_value="false"),
-        DeclareLaunchArgument("description_model", default_value="helhest.urdf.xacro",
-                              description="xacro in helhest_description/urdf"),
+        DeclareLaunchArgument(
+            "description_model",
+            default_value="helhest.urdf.xacro",
+            description="xacro in helhest_description/urdf",
+        ),
     ]
 
     hud = Node(
@@ -60,21 +67,35 @@ def generate_launch_description():
         name="mission_hud",
         output="screen",
         condition=IfCondition(LaunchConfiguration("hud")),
-        parameters=[LaunchConfiguration("params"),
-                    {"use_sim_time": LaunchConfiguration("use_sim_time")}],
+        parameters=[
+            LaunchConfiguration("params"),
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+        ],
     )
-    urdf = Command(["xacro ", PathJoinSubstitution(
-        [FindPackageShare("helhest_description"), "urdf", LaunchConfiguration("description_model")])])
+    urdf = Command(
+        [
+            "xacro ",
+            PathJoinSubstitution(
+                [
+                    FindPackageShare("helhest_description"),
+                    "urdf",
+                    LaunchConfiguration("description_model"),
+                ]
+            ),
+        ]
+    )
     description = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         name="robot_state_publisher",
         output="screen",
         condition=IfCondition(LaunchConfiguration("description")),
-        parameters=[{
-            "robot_description": ParameterValue(urdf, value_type=str),
-            "use_sim_time": LaunchConfiguration("use_sim_time"),
-        }],
+        parameters=[
+            {
+                "robot_description": ParameterValue(urdf, value_type=str),
+                "use_sim_time": LaunchConfiguration("use_sim_time"),
+            }
+        ],
     )
     rviz = Node(
         package="rviz2",
