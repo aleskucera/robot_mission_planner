@@ -44,48 +44,45 @@ import math
 import os
 import time
 
-import gpxpy
 import numpy as np
 import rclpy
 import requests
 import utm
-import yaml
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geographic_msgs.msg import GeoPointStamped, GeoPose
-from geometry_msgs.msg import Point, PoseArray, PoseStamped
+from geometry_msgs.msg import PoseArray, PoseStamped
 from nav2_msgs.action import FollowGPSWaypoints, FollowWaypoints, NavigateToPose
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from ros2_numpy import numpify
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
-from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
-from robot_mission_planner.road_goal import (
+from robot_mission_planner.follower.frames import (
+    Frames,
+    distance_to_polyline,
+    latlon_to_ecef,
+    marker_point_in_header_frame,
+    transform_xyz,
+)
+from robot_mission_planner.follower.road_goal import (
     indices_near_polyline,
     is_arrived,
     is_behind,
     latlon_distance,
-    nearest_index,
     passed_along,
-    polyline_cumulative,
     project_on_route,
-    remaining_route_length,
     route_offset_limit,
     select_carrot_goal,
     select_path_goal,
     select_route_goal,
     smooth,
 )
-
-# WGS84 (lat/lon -> ECEF for the commander backend; kept local to avoid a map_data dependency)
-_WGS84_A = 6378137.0
-_WGS84_E2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
+from robot_mission_planner.follower.route import Route, load_waypoints, resolve_file
 
 GPS_REASON_INTERSECTION = "intersection"
 GPS_REASON_NO_ROAD = "no_road"
@@ -103,42 +100,6 @@ FIX_NAMES = {2: "rtk", 1: "float", 0: "gps", -1: "nofix"}
 # the Frobenius norm (~0.04 deg). Below that it is TF noise, not a new ENU origin.
 TF_SHIFT_EPS = 0.1
 TF_ROTATION_EPS = 1e-3
-
-
-def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
-    lat, lon = math.radians(lat_deg), math.radians(lon_deg)
-    n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * math.sin(lat) ** 2)
-    x = (n + alt_m) * math.cos(lat) * math.cos(lon)
-    y = (n + alt_m) * math.cos(lat) * math.sin(lon)
-    z = (n * (1.0 - _WGS84_E2) + alt_m) * math.sin(lat)
-    return x, y, z
-
-
-def marker_point_in_header_frame(marker: Marker, point):
-    """A Marker ``points[]`` entry expressed in ``marker.header.frame_id`` (they are relative to ``marker.pose``)."""
-    m = numpify(marker.pose)
-    x, y, z = transform_xyz(m, point.x, point.y, point.z)
-    return Point(x=float(x), y=float(y), z=float(z))
-
-
-def transform_xyz(matrix: np.ndarray, x: float, y: float, z: float = 0.0) -> tuple[float, float, float]:
-    """Apply a 4x4 homogeneous matrix to a point."""
-    p = matrix[:3, :3] @ np.array([x, y, z]) + matrix[:3, 3]
-    return float(p[0]), float(p[1]), float(p[2])
-
-
-def distance_to_polyline(point, segments_a: np.ndarray, segments_b: np.ndarray) -> float:
-    """Minimum distance from ``point`` (x, y) to the polyline given as segment endpoints."""
-    if segments_a.size == 0:
-        return float("inf")
-    p = np.asarray(point, dtype=float)
-    ab = segments_b - segments_a
-    ap = p - segments_a
-    denom = np.einsum("ij,ij->i", ab, ab)
-    t = np.where(denom > 0, np.einsum("ij,ij->i", ap, ab) / np.where(denom > 0, denom, 1.0), 0.0)
-    t = np.clip(t, 0.0, 1.0)
-    closest = segments_a + ab * t[:, None]
-    return float(np.min(np.hypot(*(p - closest).T)))
 
 
 class RoadFollower(Node):
@@ -377,14 +338,19 @@ class RoadFollower(Node):
         self.mission_dir = str(gp("mission_dir"))
 
         # --- TF ---
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
-        # Matrix that maps waypoint source coordinates (ECEF or UTM) into map_frame.
+        # Waypoints are sent in the backend's own frame (ECEF for the commander, UTM for
+        # nav2) and placed in map_frame through TF; nav2 without use_utm sends lat/lon and
+        # needs no transform at all.
         self.waypoint_src_frame = (
             self.earth_frame if self.nav_backend == "commander" else self.utm_frame
         )
-        self.src_to_map = None
-        self._tf_ready = False
+        self._geo_goals = self.nav_backend == "nav2" and not self.use_utm
+        self.frames = Frames(
+            self,
+            map_frame=self.map_frame,
+            robot_frame=self.robot_frame,
+            source_frame=self.waypoint_src_frame,
+        )
 
         # --- Backend I/O ---
         latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
@@ -428,26 +394,18 @@ class RoadFollower(Node):
         self.create_timer(5.0, self._publish_waypoints_markers)
 
         # --- Waypoints ---
-        self.current_waypoint_index = self.start_index
-        self.number_waypoints = 0
-        self.waypoints_raw = []  # dicts lat/lon/ele
+        self.route = Route()
+        self.route.index = self.start_index
         self.waypoints = []  # backend goal messages (PoseStamped in src frame, or GeoPose)
-        self.waypoints_map = []  # (x, y) in map_frame for distance checks
-        self._route_a = np.empty((0, 2))  # route polyline segments in map_frame
-        self._route_b = np.empty((0, 2))
-        self._route_xy: list = []  # the same polyline as a point list, for road_goal.py
-        self._route_cum: list = []  # cumulative arclength (m) at every route point
         self.gps_path = ""
-        self._route_source = ""
         file_points = self._load_gps_data()
         if file_points:
             self._set_route(file_points, f"file {self.gps_path}")
         else:
             self.state = self.STATE_IDLE
 
-        if self.nav_backend == "nav2" and not self.use_utm:
-            self._tf_ready = True  # lat/lon goals, no transform needed
-            self._process_waypoints()
+        if self._geo_goals:
+            self._process_waypoints()  # lat/lon goals, no transform needed
         else:
             self._utm_timer = self.create_timer(1.0, self._resolve_waypoint_transform)
 
@@ -469,7 +427,7 @@ class RoadFollower(Node):
         self._commander_restarted = False  # set by the state-gap detector, consumed in the loop
         self._requested_mode_time = 0.0
         self._mode_settle_time = 2.0  # s after a switch before the state topic is trusted
-        self._waypoints_synced = False  # first sync searches the whole list
+        self.route.synced = False  # first sync searches the whole list
         self._gps_reason = None  # why GPS mode was entered
         self._gps_entry_index = 0  # waypoint index when GPS mode was entered
         self._gps_route_dir = None  # unit route direction leaving the active intersection
@@ -564,17 +522,6 @@ class RoadFollower(Node):
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
-    def _lookup_matrix(self, target: str, source: str, timeout: float = 0.5):
-        """4x4 matrix mapping points in ``source`` into ``target``, or None."""
-        try:
-            tf_msg = self.tf_buffer.lookup_transform(
-                target, source, rclpy.time.Time(), rclpy.duration.Duration(seconds=timeout)
-            )
-        except Exception as e:  # TransformException and friends
-            self.get_logger().warning(f"TF {target} <- {source} unavailable: {e}", throttle_duration_sec=5.0)
-            return None
-        return numpify(tf_msg.transform)
-
     def _resolve_waypoint_transform(self):
         """
         Resolve waypoint source frame -> map_frame and place the waypoints in map_frame.
@@ -584,26 +531,13 @@ class RoadFollower(Node):
         first fix of the run), and every waypoint, the route polyline and the cached
         intersections would stay where the old origin put them.
         """
-        m = self._lookup_matrix(self.map_frame, self.waypoint_src_frame, timeout=1.0)
-        if m is None:
+        what = self.frames.refresh_source()
+        if what is None:
             return
-        first = not self._tf_ready
-        if not first:
-            shift = float(np.linalg.norm(m[:3, 3] - self.src_to_map[:3, 3]))
-            rotation = float(np.linalg.norm(m[:3, :3] - self.src_to_map[:3, :3]))
-            if shift <= TF_SHIFT_EPS and rotation <= TF_ROTATION_EPS:
-                return
-            self.get_logger().warning(
-                f"{self.waypoint_src_frame} -> {self.map_frame} moved by {shift:.2f} m "
-                f"(rotation {rotation:.4f}): re-placing {self.number_waypoints} waypoints. "
-                f"{self.map_frame} was most likely redefined by a Fixposition restart."
-            )
-        self.src_to_map = m
-        self._tf_ready = True
         self._process_waypoints()
         self._intersections_map = None  # cached in the old map_frame
         self._intersections_on_route = None
-        if first:
+        if what == "first":
             self.get_logger().info(
                 f"Got {self.waypoint_src_frame} -> {self.map_frame} transform; "
                 f"{self.number_waypoints} waypoints placed in {self.map_frame}"
@@ -615,75 +549,62 @@ class RoadFollower(Node):
                     self.waypoint_tf_recheck_period, self._resolve_waypoint_transform
                 )
 
+    # The route and the frames the follower measures everything in; the attributes below are
+    # the node's own vocabulary for them.
+    @property
+    def waypoints_raw(self):
+        return self.route.raw
+
+    @property
+    def waypoints_map(self):
+        return self.route.map_xy
+
+    @property
+    def number_waypoints(self) -> int:
+        return len(self.route)
+
+    @property
+    def current_waypoint_index(self) -> int:
+        return self.route.index
+
+    @current_waypoint_index.setter
+    def current_waypoint_index(self, value: int):
+        self.route.index = int(value)
+
+    @property
+    def _tf_ready(self) -> bool:
+        """True once route waypoints have a position (or need none, with lat/lon goals)."""
+        return self.frames.ready or self._geo_goals
+
     def _robot_pose(self):
         """Robot (x, y, yaw) in map_frame, or None."""
-        m = self._lookup_matrix(self.map_frame, self.robot_frame, timeout=0.2)
-        if m is None:
-            return None
-        return float(m[0, 3]), float(m[1, 3]), float(math.atan2(m[1, 0], m[0, 0]))
+        return self.frames.robot_pose()
 
     def _pose_to_map(self, pose: PoseStamped):
         """(x, y) of a PoseStamped in map_frame, or None."""
-        if not pose.header.frame_id or pose.header.frame_id == self.map_frame:
-            return pose.pose.position.x, pose.pose.position.y
-        m = self._lookup_matrix(self.map_frame, pose.header.frame_id, timeout=0.2)
-        if m is None:
-            return None
-        x, y, _ = transform_xyz(m, pose.pose.position.x, pose.pose.position.y, pose.pose.position.z)
-        return x, y
+        return self.frames.pose_to_map(pose)
 
     # ------------------------------------------------------------------ waypoints
     def _load_gps_data(self):
-        """Parse the GPS file (GPX or YAML) into ``[{lat, lon, ele}, ...]`` (empty = none)."""
+        """Parse the route file (GPX or YAML) into ``[{lat, lon, ele}, ...]`` (empty = none)."""
         if self.gps_file_name == "":
-            self.get_logger().info("No GPS file: waiting for QR goals (mission mode).")
+            self.get_logger().info("No route file: waiting for QR goals (mission mode).")
             return []
-
-        if os.path.isabs(self.gps_file_name):
-            self.gps_path = self.gps_file_name
-        else:
-            candidates = [os.path.join(os.path.dirname(__file__), "..", "data", self.gps_file_name)]
-            try:
-                candidates.append(
-                    os.path.join(
-                        get_package_share_directory("robot_mission_planner"), "data", self.gps_file_name
-                    )
-                )
-            except Exception:
-                pass
-            self.gps_path = next((c for c in candidates if os.path.exists(c)), candidates[0])
-
-        if not os.path.exists(self.gps_path):
-            self.get_logger().error(f"GPS file {self.gps_path} does not exist!")
-            return []
-
-        points_raw = []
+        search = [os.path.join(os.path.dirname(__file__), "..", "data")]
         try:
-            if self.gps_path.endswith(".gpx"):
-                with open(self.gps_path, "r") as f:
-                    gpx = gpxpy.parse(f)
-                points = list(gpx.waypoints)
-                if not points:  # fall back to tracks / routes
-                    points = [p for t in gpx.tracks for s in t.segments for p in s.points]
-                if not points:
-                    points = [p for r in gpx.routes for p in r.points]
-                for wp in points:
-                    points_raw.append(
-                        {"lat": wp.latitude, "lon": wp.longitude, "ele": wp.elevation or 0.0}
-                    )
-            elif self.gps_path.endswith((".yaml", ".yml")):
-                with open(self.gps_path, "r") as f:
-                    data = yaml.safe_load(f)
-                for wp in data.get("waypoints", []):
-                    points_raw.append(
-                        {"lat": wp["latitude"], "lon": wp["longitude"], "ele": wp.get("elevation", 0.0)}
-                    )
-            if self.reverse:
-                points_raw.reverse()
-            self.get_logger().info(f"Loaded {len(points_raw)} waypoints from {self.gps_path}")
-        except Exception as e:
-            self.get_logger().error(f"Failed to parse GPS file: {e}")
+            search.append(os.path.join(get_package_share_directory("robot_mission_planner"), "data"))
+        except Exception:
+            pass
+        self.gps_path = resolve_file(self.gps_file_name, search)
+        if not os.path.exists(self.gps_path):
+            self.get_logger().error(f"Route file {self.gps_path} does not exist!")
             return []
+        try:
+            points_raw = load_waypoints(self.gps_path, self.reverse)
+        except Exception as e:
+            self.get_logger().error(f"Failed to parse the route file: {e}")
+            return []
+        self.get_logger().info(f"Loaded {len(points_raw)} waypoints from {self.gps_path}")
         return points_raw
 
     def _set_route(self, points_raw, source: str):
@@ -691,38 +612,27 @@ class RoadFollower(Node):
         Replace the mission route (``[{lat, lon, ele}, ...]``): resets the waypoint index and
         everything derived from the list (map coordinates, route polyline, GPS bookkeeping).
         """
-        self.waypoints_raw = list(points_raw)
-        self._route_source = source
-        if not source.startswith("file") and self.loop:
+        from_file = source.startswith("file")
+        if not from_file and self.loop:
             # A planned leg ends at its goal: wrapping the index / looping the commander's
             # sequence would send the robot back to the start after ARRIVED was missed.
             self.get_logger().info("Mission route: loop disabled")
             self.loop = False
-        self.current_waypoint_index = self.start_index if source.startswith("file") else 0
-        self._waypoints_synced = False
+        self.route.set(points_raw, source, index=self.start_index if from_file else 0)
         self._gps_entry_index = 0
         self._gps_route_dir = None
         self._last_road_goal = None
         self._intersections_on_route = None  # filtered against the old route
-        if self.src_to_map is not None:
+        self.waypoints = []
+        if self._tf_ready:
             self._process_waypoints()
-        else:
-            self.number_waypoints = len(self.waypoints_raw)
-        self.get_logger().info(f"Route set: {len(self.waypoints_raw)} waypoints from {source}")
+        self.get_logger().info(f"Route set: {len(self.route)} waypoints from {source}")
         self._publish_waypoints_markers()
 
     def _process_waypoints(self):
         """Convert raw lat/lon waypoints into backend goals and map_frame coordinates."""
-        self.waypoints = [self._convert_to_msg(pt) for pt in self.waypoints_raw]
-        self.waypoints_map = [self._raw_to_map(pt) for pt in self.waypoints_raw]
-        self.number_waypoints = len(self.waypoints)
-        xy = np.array([p for p in self.waypoints_map if p is not None], dtype=float)
-        self._route_xy = [(float(p[0]), float(p[1])) for p in xy]
-        self._route_cum = polyline_cumulative(self._route_xy)
-        if len(xy) >= 2:
-            self._route_a, self._route_b = xy[:-1], xy[1:]
-        else:
-            self._route_a = self._route_b = np.empty((0, 2))
+        self.waypoints = [self._convert_to_msg(pt) for pt in self.route.raw]
+        self.route.place(self.frames, self._raw_to_src)
         self._intersections_on_route = None  # the route polyline moved
 
     def _raw_to_src(self, point):
@@ -731,12 +641,6 @@ class RoadFollower(Node):
             return latlon_to_ecef(point["lat"], point["lon"], point.get("ele", 0.0))
         e, n, _, _ = utm.from_latlon(point["lat"], point["lon"])
         return e, n, point.get("ele", 0.0)
-
-    def _raw_to_map(self, point):
-        if self.src_to_map is None:
-            return None
-        x, y, _ = transform_xyz(self.src_to_map, *self._raw_to_src(point))
-        return x, y
 
     def _convert_to_msg(self, point):
         """Backend goal message for one waypoint."""
@@ -755,36 +659,22 @@ class RoadFollower(Node):
             msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = x, y, z
         else:
             msg.header.frame_id = self.map_frame
-            mx, my, mz = transform_xyz(self.src_to_map, x, y, z)
+            mx, my, mz = transform_xyz(self.frames.src_to_map, x, y, z)
             msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = mx, my, mz
         msg.pose.orientation.w = 1.0
         return msg
 
     def _waypoint_distance(self, idx, rob_xy):
         """Distance (m) from the robot to waypoint ``idx`` (inf if unknown)."""
-        if self.waypoints_map and self.waypoints_map[idx] is not None and rob_xy is not None:
-            return math.hypot(rob_xy[0] - self.waypoints_map[idx][0], rob_xy[1] - self.waypoints_map[idx][1])
+        d = self.route.distance_to(idx, rob_xy)
+        if math.isfinite(d):
+            return d
         if self.pose_gps:  # lat/lon fallback (nav2 without UTM)
             target = self.waypoints_raw[idx]
             d_lat = (self.pose_gps["lat"] - target["lat"]) * 111320
             d_lon = (self.pose_gps["lon"] - target["lon"]) * 111320 * math.cos(math.radians(target["lat"]))
             return math.hypot(d_lat, d_lon)
         return float("inf")
-
-    def _route_direction_at(self, idx):
-        """Unit vector of the route around waypoint ``idx`` in map_frame, or None."""
-        if not self.waypoints_map:
-            return None
-        n = len(self.waypoints_map)
-        i0, i1 = max(0, min(idx, n - 1)), min(n - 1, idx + 1)
-        if i0 == i1:
-            i0 = max(0, i1 - 1)
-        a, b = self.waypoints_map[i0], self.waypoints_map[i1]
-        if a is None or b is None:
-            return None
-        d = np.array([b[0] - a[0], b[1] - a[1]])
-        norm = np.linalg.norm(d)
-        return d / norm if norm > 1e-6 else None
 
     def _publish_waypoints_markers(self):
         if not self.waypoints_raw or not self._tf_ready or not self.waypoints_map:
@@ -843,7 +733,7 @@ class RoadFollower(Node):
         the parameter at 0) every ring counts, as before.
         """
         inter = self._intersections_in_map()
-        if inter is None or self.intersection_route_max_offset <= 0 or not self._route_a.size:
+        if inter is None or self.intersection_route_max_offset <= 0 or not self.route.seg_a.size:
             return inter
         if self._intersections_on_route is None:
             route = [p for p in self.waypoints_map if p is not None]
@@ -906,7 +796,7 @@ class RoadFollower(Node):
         rob_xy, yaw = pose[:2], pose[2]
         if self.road_goal_source == "route":
             goal = self._route_goal_candidate(rob_xy)
-            if goal is not None or len(self._route_xy) >= 2:
+            if goal is not None or len(self.route.polyline) >= 2:
                 return goal  # a route is there: no silent fallback to the plain carrot
         if self.road_goal_source in ("carrot", "route"):
             if self._latest_carrot is None:
@@ -932,7 +822,7 @@ class RoadFollower(Node):
         cancel out because the offset is re-measured against the same route every frame.
         ``None`` when there is no route yet, or no usable carrot.
         """
-        if len(self._route_xy) < 2:
+        if len(self.route.polyline) < 2:
             return None
         carrot = self._latest_carrot
         if carrot is not None and self.road_goal_max_ahead > 0:
@@ -943,8 +833,8 @@ class RoadFollower(Node):
         return select_route_goal(
             carrot,
             rob_xy,
-            self._route_xy,
-            self._route_cum,
+            self.route.polyline,
+            self.route.cum,
             self.current_waypoint_index,
             stretch=self.route_stretch_distance,
             min_ahead=self.road_goal_min_ahead,
@@ -961,10 +851,10 @@ class RoadFollower(Node):
         road-goal sanity check uses, so a robot driving 5 m off the mapped centreline (GNSS
         under trees) may keep that offset instead of being pulled back onto the OSM line.
         """
-        if self.road_goal_max_route_offset <= 0 or not self._route_a.size:
+        if self.road_goal_max_route_offset <= 0 or not self.route.seg_a.size:
             return 0.0  # 0 = no clamp
         return route_offset_limit(
-            distance_to_polyline(rob_xy, self._route_a, self._route_b),
+            distance_to_polyline(rob_xy, self.route.seg_a, self.route.seg_b),
             self.road_goal_max_route_offset,
             self.road_goal_route_offset_margin,
             self.road_goal_max_route_offset_hard,
@@ -1158,7 +1048,7 @@ class RoadFollower(Node):
             return
         num_wps = len(self.waypoints)
         best_idx, min_dist = self.current_waypoint_index, float("inf")
-        if not self._waypoints_synced:
+        if not self.route.synced:
             # Initial sync: the robot may start anywhere along the route.
             candidates = range(self.start_index, num_wps)
         else:
@@ -1175,7 +1065,7 @@ class RoadFollower(Node):
             if dist < min_dist:
                 min_dist, best_idx = dist, idx
         if math.isfinite(min_dist):
-            self._waypoints_synced = True
+            self.route.synced = True
         if best_idx != self.current_waypoint_index:
             self.get_logger().info(
                 f"Waypoint sync: moving index {self.current_waypoint_index} -> {best_idx} "
@@ -1265,7 +1155,7 @@ class RoadFollower(Node):
             # The next intersection is closer than the exit ring of the active one (rings
             # 16 m apart on average, 31 pairs under 6 m in Stromovka): adopt it if it lies
             # farther along the route, instead of leaving and re-entering GPS mode.
-            next_index = nearest_index(self.waypoints_map, closest_xy) if self.waypoints_map else None
+            next_index = self.route.nearest(closest_xy) if self.waypoints_map else None
             if self._gps_node_index is None or next_index is None or next_index >= self._gps_node_index:
                 self.get_logger().info(
                     f"Next intersection already within {closest:.1f} m: staying in GPS mode through it."
@@ -1308,7 +1198,7 @@ class RoadFollower(Node):
         """
         if self.final_approach_distance <= 0 or self.loop or not self.waypoints_map:
             return float("inf")
-        return remaining_route_length(rob_xy, self.waypoints_map, self.current_waypoint_index)
+        return self.route.remaining_length(rob_xy)
 
     def _enter_gps(self, reason, intersection_xy, why):
         self.get_logger().info(f"{why}. Switching to GPS mode ({reason}).")
@@ -1328,11 +1218,11 @@ class RoadFollower(Node):
         at a sharper one, keeping the follower in GPS mode for the rest of the leg.
         """
         if intersection_xy is not None and self.waypoints_map:
-            self._gps_node_index = nearest_index(self.waypoints_map, intersection_xy)
-            self._gps_route_dir = self._route_direction_at(self._gps_node_index)
+            self._gps_node_index = self.route.nearest(intersection_xy)
+            self._gps_route_dir = self.route.direction_at(self._gps_node_index)
         else:
             self._gps_node_index = None
-            self._gps_route_dir = self._route_direction_at(self.current_waypoint_index)
+            self._gps_route_dir = self.route.direction_at(self.current_waypoint_index)
 
     def _enter_road(self, why):
         self.get_logger().info(f"{why}. Switching back to ROAD mode.")
@@ -1666,9 +1556,9 @@ class RoadFollower(Node):
         checked, what = goal_xy, "goal"
         if self.road_goal_source == "route" and self._latest_carrot is not None:
             checked, what = self._latest_carrot, "carrot"
-        if self.road_goal_max_route_offset > 0 and self._route_a.size:
-            off = distance_to_polyline(checked, self._route_a, self._route_b)
-            off_robot = distance_to_polyline(pose[:2], self._route_a, self._route_b) if pose is not None else None
+        if self.road_goal_max_route_offset > 0 and self.route.seg_a.size:
+            off = distance_to_polyline(checked, self.route.seg_a, self.route.seg_b)
+            off_robot = distance_to_polyline(pose[:2], self.route.seg_a, self.route.seg_b) if pose is not None else None
             limit = route_offset_limit(
                 off_robot, self.road_goal_max_route_offset,
                 self.road_goal_route_offset_margin, self.road_goal_max_route_offset_hard,
@@ -1728,11 +1618,11 @@ class RoadFollower(Node):
     def _road_goal_log_suffix(self, goal_xy) -> str:
         """``route`` source: how far ahead of the robot the goal is and how far off the route."""
         pose = self._robot_pose()
-        if self.road_goal_source != "route" or pose is None or len(self._route_xy) < 2:
+        if self.road_goal_source != "route" or pose is None or len(self.route.polyline) < 2:
             return ""
         ahead = math.hypot(goal_xy[0] - pose[0], goal_xy[1] - pose[1])
         proj = project_on_route(
-            self._route_xy, self._route_cum, goal_xy,
+            self.route.polyline, self.route.cum, goal_xy,
             self.current_waypoint_index, self.route_projection_window,
         )
         lateral = f"{proj[1]:+.1f}" if proj is not None else "?"

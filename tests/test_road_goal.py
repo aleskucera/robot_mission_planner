@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from robot_mission_planner.road_goal import (
+from robot_mission_planner.follower.road_goal import (
     is_behind,
     polyline_cumulative,
     project_on_route,
@@ -84,7 +84,7 @@ def test_smooth():
 
 
 def test_is_arrived_radius_and_index_guard():
-    from robot_mission_planner.road_goal import is_arrived
+    from robot_mission_planner.follower.road_goal import is_arrived
 
     wps = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0), (40.0, 0.0)]
     assert is_arrived((38.0, 1.0), wps, 4, radius=5.0)
@@ -96,7 +96,7 @@ def test_is_arrived_radius_and_index_guard():
 
 
 # ---------------------------------------------------------------- intersection exit / offsets
-from robot_mission_planner.road_goal import nearest_index, passed_along, route_offset_limit  # noqa: E402
+from robot_mission_planner.follower.road_goal import nearest_index, passed_along, route_offset_limit  # noqa: E402
 
 
 def test_nearest_index_skips_missing_points():
@@ -130,7 +130,7 @@ def test_route_offset_limit_relative_to_robot():
 
 
 # ---------------------------------------------------------------- final approach
-from robot_mission_planner.road_goal import remaining_route_length  # noqa: E402
+from robot_mission_planner.follower.road_goal import remaining_route_length  # noqa: E402
 
 
 def test_remaining_route_length_counts_robot_and_segments():
@@ -157,7 +157,7 @@ def test_remaining_route_length_without_a_usable_route_is_infinite():
 
 
 # ---------------------------------------------------------------- QR goal distance
-from robot_mission_planner.road_goal import latlon_distance  # noqa: E402
+from robot_mission_planner.follower.road_goal import latlon_distance  # noqa: E402
 
 
 def test_latlon_distance_metres():
@@ -173,7 +173,7 @@ def test_latlon_distance_metres():
 
 
 # ---------------------------------------------------------------- ring pruning (P4)
-from robot_mission_planner.road_goal import indices_near_polyline  # noqa: E402
+from robot_mission_planner.follower.road_goal import indices_near_polyline  # noqa: E402
 
 
 def test_indices_near_polyline_keeps_only_the_rings_on_the_route():
