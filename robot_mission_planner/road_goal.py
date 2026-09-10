@@ -6,12 +6,18 @@ installation. Everything is in the follower's ``map_frame`` (x, y in metres).
 
 The commander (``crl_commander``) treats a goal that is already inside its
 arrival box (``goal_reached_dist_x/y``, 2.5 m on Helhest) as *reached* and
-holds position instead of driving to it. Both selectors below therefore
-guarantee that the returned goal is at least ``min_ahead`` metres away from the
+holds position instead of driving to it. Every selector below therefore
+guarantees that the returned goal is at least ``min_ahead`` metres away from the
 robot: a closer input is pushed outwards along its own bearing, so the robot
 keeps moving in the direction the road perception points to.
+
+Three selectors, one per ``road_goal_source``: :func:`select_carrot_goal` (one road-centre
+point), :func:`select_path_goal` (a predicted road path) and :func:`select_route_goal`, which
+combines the carrot with the *shape* of the planned OSM route -- see its docstring for why the
+route is only ever used relative to the robot's own projection on it.
 """
 
+import bisect
 import math
 
 Point = tuple[float, float]
@@ -100,6 +106,178 @@ def select_path_goal(
                 x += step * math.cos(yaw)
                 y += step * math.sin(yaw)
     return _push_out(robot_xy, end, min_ahead, robot_yaw)
+
+
+def polyline_cumulative(points: list[Point]) -> list[float]:
+    """Cumulative arclength (m) at every vertex of the polyline."""
+    cum = [0.0]
+    for a, b in zip(points, points[1:]):
+        cum.append(cum[-1] + _dist(a, b))
+    return cum
+
+
+def _segment_range(count: int, index: int, window: int) -> range:
+    """Segment indices searched around waypoint ``index`` (``window <= 0`` = all of them)."""
+    if count < 1:
+        return range(0)
+    if window <= 0:
+        return range(count)
+    lo = max(0, min(index, count - 1) - window)
+    hi = min(count - 1, index + window)
+    return range(lo, hi + 1)
+
+
+def project_on_route(
+    points: list[Point], cum: list[float], xy: Point, index: int = 0, window: int = 0
+) -> tuple[float, float] | None:
+    """
+    Project ``xy`` on the route polyline: ``(arclength, signed lateral offset)``, the offset
+    positive to the left of the direction of travel.
+
+    Only segments within ``window`` waypoints of ``index`` are searched, so a route that comes
+    back close to itself (Stromovka legs run parallel 10 m apart) is projected onto the leg the
+    robot is actually driving. ``None`` for a polyline with fewer than two points.
+    """
+    if len(points) < 2 or len(cum) != len(points):
+        return None
+    best_d, best = float("inf"), None
+    for i in _segment_range(len(points) - 1, index, window):
+        a, b = points[i], points[i + 1]
+        abx, aby = b[0] - a[0], b[1] - a[1]
+        seg = math.hypot(abx, aby)
+        if seg <= 1e-9:
+            continue
+        apx, apy = xy[0] - a[0], xy[1] - a[1]
+        t = min(1.0, max(0.0, (apx * abx + apy * aby) / (seg * seg)))
+        d = math.hypot(apx - t * abx, apy - t * aby)
+        if d < best_d:
+            best_d = d
+            best = (cum[i] + t * seg, (abx * apy - aby * apx) / seg)
+    return best
+
+
+def route_point_at(points: list[Point], cum: list[float], s: float) -> tuple[Point, float]:
+    """
+    ``((x, y), yaw)`` at arclength ``s`` along the polyline. ``s`` outside the route is
+    extrapolated along the first / last segment: the goal may have to be pushed past the end of
+    a short route to stay outside the commander's arrival box (the follower's final approach
+    normally takes over long before that).
+
+    Exactly on a vertex the *incoming* segment gives the heading (and with it the normal the
+    lateral offset is applied along), so a goal clamped at a corner still faces the way the
+    robot approaches it.
+    """
+    if len(points) < 2:
+        return (points[0] if points else (0.0, 0.0)), 0.0
+    i = min(max(bisect.bisect_left(cum, s) - 1, 0), len(points) - 2)
+    a, b = points[i], points[i + 1]
+    seg = cum[i + 1] - cum[i]
+    if seg <= 1e-9:
+        return a, 0.0
+    t = (s - cum[i]) / seg
+    return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])), _bearing(a, b)
+
+
+def _wrap(angle: float) -> float:
+    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def turn_limited_arclength(
+    points: list[Point], cum: list[float], s_from: float, s_to: float, max_turn: float
+) -> float:
+    """
+    Cut ``s_to`` back to the first route vertex whose segment heading differs from the heading
+    at ``s_from`` by more than ``max_turn`` (rad): the goal must not sit around a corner, where
+    the local planner cannot see and the road perception does not reach. ``max_turn <= 0`` = no
+    limit.
+    """
+    if max_turn <= 0.0 or s_to <= s_from or len(points) < 2:
+        return s_to
+    # The reference is the heading the robot leaves ``s_from`` with, so a corner it is already
+    # standing on does not clamp the stretch to zero.
+    first = min(max(bisect.bisect_right(cum, s_from) - 1, 0), len(points) - 2)
+    yaw0 = _bearing(points[first], points[first + 1])
+    for i in range(first + 1, len(points) - 1):
+        if cum[i] >= s_to:
+            break
+        if abs(_wrap(_bearing(points[i], points[i + 1]) - yaw0)) > max_turn:
+            return max(s_from, cum[i])
+    return s_to
+
+
+def select_route_goal(
+    carrot_xy: Point | None,
+    robot_xy: Point,
+    points: list[Point],
+    cum: list[float],
+    index: int,
+    stretch: float,
+    min_ahead: float,
+    max_ahead: float,
+    lateral_limit: float,
+    lateral_gain: float = 1.0,
+    max_turn: float = 0.0,
+    window: int = 0,
+) -> Goal | None:
+    """
+    Road goal from the *shape* of the planned OSM route, placed by the road perception.
+
+    The route is used relatively, never as an absolute position: both the robot and the carrot
+    (the convex-hull centre of the road points) are projected onto it, and the goal is put
+    ``stretch`` metres further along the route from whichever of the two is ahead, carrying the
+    carrot's own lateral offset (``lateral_gain`` of it, clamped to ``lateral_limit``, 0 = no
+    clamp) over to that point. So the map contributes the direction the road takes -- which a
+    hull centre lagging behind the robot cannot supply -- while the offset between the map and
+    the real drivable surface (GNSS error plus OSM error, up to ~5 m under trees) is measured
+    by the lidar every frame and reproduced at the goal.
+
+    The result is kept at least ``min_ahead`` from the robot (a nearer goal sits inside the
+    commander's arrival box and stops it, which wins over every other limit here) and, if that
+    allows, at most ``max_ahead`` from it and before the first corner sharper than ``max_turn``.
+    ``None`` when there is no usable route, or when even the start of the stretch is farther
+    than ``max_ahead`` (the projection cannot be trusted then).
+    """
+    proj_r = project_on_route(points, cum, robot_xy, index, window)
+    if proj_r is None:
+        return None
+    s_robot, lateral_robot = proj_r
+    s_carrot, lateral = s_robot, lateral_robot
+    if carrot_xy is not None:
+        proj_c = project_on_route(points, cum, carrot_xy, index, window)
+        if proj_c is None:
+            return None
+        s_carrot, lateral = proj_c
+    lateral *= lateral_gain
+    if lateral_limit > 0.0:
+        lateral = max(-lateral_limit, min(lateral_limit, lateral))
+
+    def goal_at(s: float) -> Goal:
+        (x, y), yaw = route_point_at(points, cum, s)
+        return x - lateral * math.sin(yaw), y + lateral * math.cos(yaw), yaw
+
+    # The carrot never pulls the goal back: a hull centre that lags the robot is not evidence
+    # that the road ends there.
+    s_base = max(s_robot, s_carrot)
+    s_goal = turn_limited_arclength(points, cum, s_base, s_base + max(0.0, stretch), max_turn)
+
+    if max_ahead > 0.0 and _dist(robot_xy, goal_at(s_goal)[:2]) > max_ahead:
+        lo, hi = min(s_robot, s_goal), s_goal
+        if _dist(robot_xy, goal_at(lo)[:2]) > max_ahead:
+            return None  # the route itself is out of reach: a bad projection, not a goal
+        for _ in range(20):
+            mid = 0.5 * (lo + hi)
+            if _dist(robot_xy, goal_at(mid)[:2]) > max_ahead:
+                hi = mid
+            else:
+                lo = mid
+        s_goal = lo
+
+    step = 0.5
+    for _ in range(int(2.0 * (min_ahead + max(max_ahead, min_ahead)) / step) + 4):
+        if _dist(robot_xy, goal_at(s_goal)[:2]) >= min_ahead:
+            return goal_at(s_goal)
+        s_goal += step
+    return None
 
 
 def is_behind(goal_xy: Point, robot_xy: Point, robot_yaw: float) -> bool:

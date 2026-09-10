@@ -4,9 +4,14 @@ import pytest
 
 from robot_mission_planner.road_goal import (
     is_behind,
+    polyline_cumulative,
+    project_on_route,
+    route_point_at,
     select_carrot_goal,
     select_path_goal,
+    select_route_goal,
     smooth,
+    turn_limited_arclength,
 )
 
 ROBOT = (0.0, 0.0)
@@ -199,3 +204,122 @@ def test_indices_near_polyline_measures_to_the_segment_not_the_vertices():
     assert indices_near_polyline([(10.0, 5.0)], route, 3.0) == []
     # Before the start of the route the distance is the one to the first vertex.
     assert indices_near_polyline([(-4.0, 0.0)], route, 3.0) == []
+
+
+# --- road_goal_source: route -------------------------------------------------------------
+# A straight route east, waypoints every 3 m as route_planner resamples them, and a route
+# that turns 90 degrees north after 12 m.
+STRAIGHT = [(float(x), 0.0) for x in range(0, 31, 3)]
+STRAIGHT_CUM = polyline_cumulative(STRAIGHT)
+CORNER = [(0.0, 0.0), (6.0, 0.0), (12.0, 0.0), (12.0, 6.0), (12.0, 12.0)]
+CORNER_CUM = polyline_cumulative(CORNER)
+
+
+def route_goal(carrot, robot, points=STRAIGHT, cum=STRAIGHT_CUM, index=0, **kw):
+    kw.setdefault("stretch", 6.0)
+    kw.setdefault("min_ahead", 4.0)
+    kw.setdefault("max_ahead", 12.0)
+    kw.setdefault("lateral_limit", 5.0)
+    return select_route_goal(carrot, robot, points, cum, index, **kw)
+
+
+def test_project_on_route_gives_arclength_and_signed_offset():
+    s, n = project_on_route(STRAIGHT, STRAIGHT_CUM, (7.0, 2.0))
+    assert (s, n) == pytest.approx((7.0, 2.0))          # 2 m to the left of an eastward route
+    s, n = project_on_route(STRAIGHT, STRAIGHT_CUM, (7.0, -2.0))
+    assert (s, n) == pytest.approx((7.0, -2.0))
+
+
+def test_project_on_route_window_keeps_the_current_leg():
+    # A route that folds back 4 m north: without a window the point projects onto the
+    # return leg, with one it stays on the leg around the current waypoint index.
+    pts = [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (20.0, 4.0), (10.0, 4.0), (0.0, 4.0)]
+    cum = polyline_cumulative(pts)
+    assert project_on_route(pts, cum, (10.0, 3.0))[0] == pytest.approx(cum[4])
+    assert project_on_route(pts, cum, (10.0, 3.0), index=1, window=1)[0] == pytest.approx(10.0)
+
+
+def test_route_point_at_extrapolates_past_the_ends():
+    (x, y), yaw = route_point_at(STRAIGHT, STRAIGHT_CUM, 34.0)
+    assert (x, y, yaw) == pytest.approx((34.0, 0.0, 0.0))
+
+
+def test_lagging_carrot_still_gives_a_goal_stretched_along_the_route():
+    # The hull centre sits 1 m behind the robot: the plain carrot source would send a goal
+    # 4 m along the robot heading, the route source puts it 6 m further along the route.
+    g = route_goal((9.0, 0.0), (10.0, 0.0))
+    assert g == pytest.approx((16.0, 0.0, 0.0))
+
+
+def test_carrot_offset_is_carried_to_the_stretched_goal():
+    # The real path runs 2 m north of the OSM line here: the goal keeps that offset.
+    g = route_goal((10.0, 2.0), (10.0, 2.0))
+    assert g == pytest.approx((16.0, 2.0, 0.0))
+
+
+def test_goal_follows_the_corner_instead_of_the_robot_heading():
+    g = route_goal((9.0, 0.0), (9.0, 0.0), points=CORNER, cum=CORNER_CUM, index=1, max_turn=0.0)
+    assert g == pytest.approx((12.0, 3.0, math.pi / 2))
+
+
+def test_corner_clamp_stops_the_stretch_at_a_sharp_turn():
+    g = route_goal(
+        (9.0, 0.0), (5.0, 0.0), points=CORNER, cum=CORNER_CUM, index=1,
+        max_turn=math.radians(45), min_ahead=4.0,
+    )
+    assert g == pytest.approx((12.0, 0.0, 0.0))          # stopped at the corner vertex
+
+
+def test_min_ahead_wins_over_the_corner_clamp():
+    # Standing on the corner: clamping would give a goal inside the commander's arrival box,
+    # so the goal is pushed on around the corner instead.
+    g = route_goal(
+        (11.0, 0.0), (11.0, 0.0), points=CORNER, cum=CORNER_CUM, index=2,
+        max_turn=math.radians(45),
+    )
+    assert math.hypot(g[0] - 11.0, g[1]) >= 4.0 - 1e-6
+    assert g[1] > 0.0
+
+
+def test_stretch_is_shortened_to_max_ahead():
+    g = route_goal((10.0, 0.0), (10.0, 0.0), stretch=20.0, max_ahead=8.0)
+    assert g == pytest.approx((18.0, 0.0, 0.0))
+
+
+def test_lateral_offset_is_clamped_and_scaled():
+    g = route_goal((10.0, 9.0), (10.0, 9.0), lateral_limit=3.0)
+    assert g == pytest.approx((16.0, 3.0, 0.0))
+    g = route_goal((10.0, 4.0), (10.0, 4.0), lateral_gain=0.5)
+    assert g == pytest.approx((16.0, 2.0, 0.0))
+
+
+def test_carrot_ahead_of_the_robot_moves_the_goal_further():
+    g = route_goal((14.0, 0.0), (10.0, 0.0))
+    assert g == pytest.approx((20.0, 0.0, 0.0))
+
+
+def test_without_a_carrot_the_robot_offset_is_kept():
+    g = route_goal(None, (10.0, 1.5))
+    assert g == pytest.approx((16.0, 1.5, 0.0))
+
+
+def test_no_goal_without_a_usable_route():
+    assert route_goal((1.0, 0.0), (0.0, 0.0), points=[(0.0, 0.0)], cum=[0.0]) is None
+
+
+def test_the_offset_is_kept_however_far_the_route_is():
+    # The whole point of using the route relatively: a robot 20 m off the mapped line (or a
+    # 20 m GNSS error) still gets a goal 6 m ahead of itself, not one pulling it to the line.
+    assert route_goal((0.0, 20.0), (0.0, 20.0), lateral_limit=0.0) == pytest.approx(
+        (6.0, 20.0, 0.0)
+    )
+
+
+def test_no_goal_when_the_clamped_route_is_out_of_reach():
+    # 20 m off the route but the offset may only be 3 m: the goal would be 17 m away, so the
+    # projection is not trusted at all (in the follower the carrot is rejected first).
+    assert route_goal((0.0, 20.0), (0.0, 20.0), lateral_limit=3.0) is None
+
+
+def test_turn_limited_arclength_without_a_limit():
+    assert turn_limited_arclength(CORNER, CORNER_CUM, 0.0, 18.0, 0.0) == 18.0
