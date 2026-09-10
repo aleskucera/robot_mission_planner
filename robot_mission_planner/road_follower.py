@@ -52,14 +52,12 @@ transformed into ``map_frame`` through TF (commander backend), or lat/lon -> UTM
 ``utm_frame`` -> ``map_frame`` (nav2 backend with ``use_utm``).
 """
 
-import json
 import math
 import os
 import time
 
 import numpy as np
 import rclpy
-import requests
 from ament_index_python.packages import get_package_share_directory
 from geographic_msgs.msg import GeoPointStamped
 from geometry_msgs.msg import PoseArray, PoseStamped
@@ -159,9 +157,6 @@ class RoadFollower(Node):
         self.declare_parameter("intersections_topic", "/intersections")
         self.declare_parameter("gps_fix_topic", "/fixposition/odometry_llh")
         self.declare_parameter(
-            "gps_filtered_topic", ""
-        )  # optional second NavSatFix (telemetry)
-        self.declare_parameter(
             "goal_waypoint_topic", "/goal_waypoint"
         )  # commander: operator goal
         self.declare_parameter(
@@ -189,14 +184,12 @@ class RoadFollower(Node):
 
         # --- GPS following ---
         self.declare_parameter("file", "")
-        self.declare_parameter("robot_id", "helhest-robot")
         self.declare_parameter("start", 0)
         self.declare_parameter("reverse", False)
         self.declare_parameter(
             "loop", False
         )  # file routes only; mission routes never loop
         self.declare_parameter("use_utm", True)  # nav2 backend only
-        self.declare_parameter("telemetry_url", "")  # empty = no telemetry POSTs
 
         # --- Thresholds ---
         self.declare_parameter("intersection_enter_threshold", 3.0)  # m: ROAD -> GPS
@@ -360,12 +353,10 @@ class RoadFollower(Node):
         self.earth_frame = gp("earth_frame")
         self.utm_frame = gp("utm_frame")
         self.gps_file_name = gp("file")
-        self.robot_id = gp("robot_id")
         self.start_index = gp("start")
         self.reverse = gp("reverse")
         self.loop = gp("loop")
         self.use_utm = gp("use_utm")
-        self.telemetry_url = gp("telemetry_url")
         self.enter_threshold = gp("intersection_enter_threshold")
         self.exit_threshold = gp("intersection_exit_threshold")
         self.intersection_route_max_offset = float(gp("intersection_route_max_offset"))
@@ -553,9 +544,6 @@ class RoadFollower(Node):
         self._plan_client = None
 
         self.pose_gps = None
-        self.pose_ekf = None
-        self.path_send_url = False
-        self.data = {"robot_id": self.robot_id}
 
         # --- Subscriptions ---
         if self.mode.road:
@@ -580,13 +568,6 @@ class RoadFollower(Node):
                 NavSatFix,
                 gp("gps_fix_topic"),
                 self._gps_callback,
-                qos_profile_sensor_data,
-            )
-        if gp("gps_filtered_topic"):
-            self.create_subscription(
-                NavSatFix,
-                gp("gps_filtered_topic"),
-                self._ekf_callback,
                 qos_profile_sensor_data,
             )
         if gp("qr_goal_topic") and self.mode.mission:
@@ -1033,11 +1014,6 @@ class RoadFollower(Node):
     def _gps_callback(self, msg):
         self.pose_gps = {"lat": msg.latitude, "lon": msg.longitude}
         self._update_fix_status(int(msg.status.status))
-        if not self.path_send_url and (
-            self.pose_ekf or not self.get_parameter("gps_filtered_topic").value
-        ):
-            self.send_data_url("path")
-            self.path_send_url = True
 
     def _fix_name(self) -> str:
         """Name of the current fix quality ("" until the first fix message)."""
@@ -1052,39 +1028,6 @@ class RoadFollower(Node):
         self._fix_status = status
         self.get_logger().info(f"GNSS fix: {self._fix_name()} (NavSatStatus {status})")
         self._event(f"FIX:{self._fix_name()}")
-
-    def _ekf_callback(self, msg):
-        self.pose_ekf = {"lat": msg.latitude, "lon": msg.longitude}
-        if not self.path_send_url and self.pose_gps:
-            self.send_data_url("path")
-            self.path_send_url = True
-
-    def send_data_url(self, msg_type):
-        """Sends telemetry data to the remote server (disabled when telemetry_url is empty)."""
-        if not self.telemetry_url:
-            return
-        data = self.data
-        data["mission"] = {"current_waypoint_index": self.current_waypoint_index}
-        if msg_type == "path":
-            data["mission"]["waypoints"] = self.waypoints_raw
-        if self.pose_gps:
-            data["position"] = {
-                "gps": self.pose_gps,
-                "ekf": self.pose_ekf or self.pose_gps,
-            }
-        else:
-            data["position"] = {"gps": [], "ekf": []}
-        try:
-            response = requests.post(
-                self.telemetry_url,
-                headers={"Content-Type": "application/json"},
-                data=json.dumps(data),
-                timeout=1.0,
-            )
-            if response.status_code == 202 and msg_type != "path":
-                self.send_data_url("path")
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------ state machine
     def _state_text(self) -> str:

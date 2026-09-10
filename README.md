@@ -130,8 +130,6 @@ Frames are parameters: `map_frame` (fixed frame all distances are measured in, `
 The `crl_commander` service types come from the real package on the robot; a dev workspace
 uses the interface-only stub in `src/crl_commander`.
 
-Telemetry POSTs are disabled unless `telemetry_url` is set.
-
 ## Launch
 
 ```bash
