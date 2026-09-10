@@ -107,13 +107,19 @@ class MissionHud(Node):
         self.markup = bool(p("markup", True).value)
         self.rate = float(p("rate", 4.0).value)
         # Last line of the mission panel: how the operator intervenes ("" = no line).
-        self.hint = str(p("hint", "abort: Up+Enter in the follower window, pane 2").value)
+        self.hint = str(
+            p("hint", "abort: Up+Enter in the follower window, pane 2").value
+        )
 
         # ---- placeholder robot body (a URDF on /robot_description is the real thing)
         self.body_enabled = bool(p("robot_body", True).value)
-        self.body_size = [float(v) for v in p("robot_body_size", [0.9, 0.7, 0.35]).value]
+        self.body_size = [
+            float(v) for v in p("robot_body_size", [0.9, 0.7, 0.35]).value
+        ]
         self.body_offset_z = float(p("robot_body_offset_z", 0.25).value)
-        self.body_color = [float(v) for v in p("robot_body_color", [0.25, 0.6, 1.0, 0.5]).value]
+        self.body_color = [
+            float(v) for v in p("robot_body_color", [0.25, 0.6, 1.0, 0.5]).value
+        ]
 
         self._follower = ""
         self._event = ""
@@ -134,10 +140,22 @@ class MissionHud(Node):
             if topic:
                 self.create_subscription(msg_type, topic, cb, qos)
 
-        sub(follower_state, String, lambda m: setattr(self, "_follower", m.data), LATCHED)
+        sub(
+            follower_state,
+            String,
+            lambda m: setattr(self, "_follower", m.data),
+            LATCHED,
+        )
         sub(follower_event, String, self._event_cb, LATCHED)
-        sub(commander_state, String, lambda m: setattr(self, "_commander", m.data), PLAIN)
-        sub(planner_status, String, lambda m: setattr(self, "_planner", m.data), LATCHED)
+        sub(
+            commander_state,
+            String,
+            lambda m: setattr(self, "_commander", m.data),
+            PLAIN,
+        )
+        sub(
+            planner_status, String, lambda m: setattr(self, "_planner", m.data), LATCHED
+        )
         sub(route_path, Path, lambda m: setattr(self, "_route", m), LATCHED)
         sub(qr_goal, GeoPointStamped, lambda m: setattr(self, "_goal", m), LATCHED)
         sub(estop, Bool, lambda m: setattr(self, "_estop", m.data), PLAIN)
@@ -172,11 +190,13 @@ class MissionHud(Node):
         room = max(self.max_chars - 10, 8)
         if len(value) > room:
             value = value[: room - 1] + "\u2026"
-        return f'{self._color(f"{label:<10}", GREY)}{self._color(value, color)}'
+        return f"{self._color(f'{label:<10}', GREY)}{self._color(value, color)}"
 
     def _robot_xy(self, frame: str) -> tuple[float, float] | None:
         try:
-            tr = self.tf_buffer.lookup_transform(frame, self.robot_frame, Time()).transform
+            tr = self.tf_buffer.lookup_transform(
+                frame, self.robot_frame, Time()
+            ).transform
         except Exception:
             return None
         return tr.translation.x, tr.translation.y
@@ -192,7 +212,9 @@ class MissionHud(Node):
             return f"{len(pts)} wp, {total:.0f} m (no robot tf)"
         # Nearest waypoint, then the route length left from it to the end.
         i = min(range(len(pts)), key=lambda k: math.dist(pts[k], here))
-        left = math.dist(here, pts[i]) + sum(math.dist(pts[k], pts[k + 1]) for k in range(i, len(pts) - 1))
+        left = math.dist(here, pts[i]) + sum(
+            math.dist(pts[k], pts[k + 1]) for k in range(i, len(pts) - 1)
+        )
         return f"{i + 1}/{len(pts)} wp   {left:.0f} m left of {total:.0f} m"
 
     def _overlay(self, lines: list[str], right: bool, bg: ColorRGBA) -> OverlayText:
@@ -222,7 +244,11 @@ class MissionHud(Node):
         lines.append(self._row("route", self._route_progress()))
 
         commander = self._commander or "-"
-        lines.append(self._row("commander", commander, AMBER if "STUCK" in commander.upper() else WHITE))
+        lines.append(
+            self._row(
+                "commander", commander, AMBER if "STUCK" in commander.upper() else WHITE
+            )
+        )
 
         event = self._event or "-"
         if self._event_at is not None:
@@ -231,7 +257,11 @@ class MissionHud(Node):
         lines.append(self._row("event", event))
 
         planner = self._planner or "-"
-        lines.append(self._row("planner", planner, RED if planner.startswith("failed") else WHITE))
+        lines.append(
+            self._row(
+                "planner", planner, RED if planner.startswith("failed") else WHITE
+            )
+        )
 
         goal = "-"
         if self._goal is not None:
@@ -239,7 +269,9 @@ class MissionHud(Node):
         lines.append(self._row("QR goal", goal))
         if self.hint:
             lines.append(self._row("hint", self.hint, GREY))
-        return self._overlay(lines, right=False, bg=rgba(0.06, 0.06, 0.08, self.bg_alpha))
+        return self._overlay(
+            lines, right=False, bg=rgba(0.06, 0.06, 0.08, self.bg_alpha)
+        )
 
     def _status_panel(self) -> OverlayText:
         if self._estop is None:
@@ -279,7 +311,11 @@ class MissionHud(Node):
         lines.append(self._row("fix", fix, color))
 
         # The whole panel goes dark red while the e-stop is in, so it reads across the room.
-        bg = rgba(0.35, 0.02, 0.02, 0.75) if self._estop else rgba(0.06, 0.06, 0.08, self.bg_alpha)
+        bg = (
+            rgba(0.35, 0.02, 0.02, 0.75)
+            if self._estop
+            else rgba(0.06, 0.06, 0.08, self.bg_alpha)
+        )
         return self._overlay(lines, right=True, bg=bg)
 
     def _tick(self) -> None:

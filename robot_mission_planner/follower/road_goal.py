@@ -32,11 +32,17 @@ def _dist(a: Point, b: Point) -> float:
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
 
-def _push_out(robot_xy: Point, target_xy: Point, distance: float, fallback_yaw: float) -> Goal:
+def _push_out(
+    robot_xy: Point, target_xy: Point, distance: float, fallback_yaw: float
+) -> Goal:
     """Point ``distance`` metres from the robot in the direction of ``target_xy``."""
     d = _dist(robot_xy, target_xy)
     yaw = _bearing(robot_xy, target_xy) if d > 1e-6 else fallback_yaw
-    return robot_xy[0] + distance * math.cos(yaw), robot_xy[1] + distance * math.sin(yaw), yaw
+    return (
+        robot_xy[0] + distance * math.cos(yaw),
+        robot_xy[1] + distance * math.sin(yaw),
+        yaw,
+    )
 
 
 def select_carrot_goal(
@@ -87,7 +93,9 @@ def select_path_goal(
     end = within[-1]
     if _dist(robot_xy, end) >= min_ahead:
         prev = path_xy[path_xy.index(end) - 1] if path_xy.index(end) > 0 else robot_xy
-        yaw = _bearing(prev, end) if _dist(prev, end) > 1e-6 else _bearing(robot_xy, end)
+        yaw = (
+            _bearing(prev, end) if _dist(prev, end) > 1e-6 else _bearing(robot_xy, end)
+        )
         return end[0], end[1], yaw
 
     # Extrapolate along the path's own direction when it has one that leads
@@ -156,7 +164,9 @@ def project_on_route(
     return best
 
 
-def route_point_at(points: list[Point], cum: list[float], s: float) -> tuple[Point, float]:
+def route_point_at(
+    points: list[Point], cum: list[float], s: float
+) -> tuple[Point, float]:
     """
     ``((x, y), yaw)`` at arclength ``s`` along the polyline. ``s`` outside the route is
     extrapolated along the first / last segment: the goal may have to be pushed past the end of
@@ -258,12 +268,16 @@ def select_route_goal(
     # The carrot never pulls the goal back: a hull centre that lags the robot is not evidence
     # that the road ends there.
     s_base = max(s_robot, s_carrot)
-    s_goal = turn_limited_arclength(points, cum, s_base, s_base + max(0.0, stretch), max_turn)
+    s_goal = turn_limited_arclength(
+        points, cum, s_base, s_base + max(0.0, stretch), max_turn
+    )
 
     if max_ahead > 0.0 and _dist(robot_xy, goal_at(s_goal)[:2]) > max_ahead:
         lo, hi = min(s_robot, s_goal), s_goal
         if _dist(robot_xy, goal_at(lo)[:2]) > max_ahead:
-            return None  # the route itself is out of reach: a bad projection, not a goal
+            return (
+                None  # the route itself is out of reach: a bad projection, not a goal
+            )
         for _ in range(20):
             mid = 0.5 * (lo + hi)
             if _dist(robot_xy, goal_at(mid)[:2]) > max_ahead:
@@ -291,7 +305,9 @@ def smooth(previous: Point | None, current: Point, alpha: float) -> Point:
     if previous is None or alpha <= 0.0:
         return current
     a = min(alpha, 0.99)
-    return a * previous[0] + (1.0 - a) * current[0], a * previous[1] + (1.0 - a) * current[1]
+    return a * previous[0] + (1.0 - a) * current[0], a * previous[1] + (
+        1.0 - a
+    ) * current[1]
 
 
 def is_arrived(
@@ -418,9 +434,17 @@ def indices_near_polyline(
         for a, b in zip(polyline, polyline[1:]):
             # Cheap bounding-box reject first: a route has many segments, and all but a
             # few are nowhere near the point.
-            if not min(a[0], b[0]) - max_distance <= p[0] <= max(a[0], b[0]) + max_distance:
+            if (
+                not min(a[0], b[0]) - max_distance
+                <= p[0]
+                <= max(a[0], b[0]) + max_distance
+            ):
                 continue
-            if not min(a[1], b[1]) - max_distance <= p[1] <= max(a[1], b[1]) + max_distance:
+            if (
+                not min(a[1], b[1]) - max_distance
+                <= p[1]
+                <= max(a[1], b[1]) + max_distance
+            ):
                 continue
             if _point_segment_distance(p, a, b) <= max_distance:
                 kept.append(i)

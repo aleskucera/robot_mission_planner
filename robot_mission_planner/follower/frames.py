@@ -26,7 +26,9 @@ TF_SHIFT_EPS = 0.1
 TF_ROTATION_EPS = 1e-3
 
 
-def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[float, float, float]:
+def latlon_to_ecef(
+    lat_deg: float, lon_deg: float, alt_m: float = 0.0
+) -> tuple[float, float, float]:
     lat, lon = math.radians(lat_deg), math.radians(lon_deg)
     n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * math.sin(lat) ** 2)
     x = (n + alt_m) * math.cos(lat) * math.cos(lon)
@@ -35,7 +37,9 @@ def latlon_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> tuple[
     return x, y, z
 
 
-def transform_xyz(matrix: np.ndarray, x: float, y: float, z: float = 0.0) -> tuple[float, float, float]:
+def transform_xyz(
+    matrix: np.ndarray, x: float, y: float, z: float = 0.0
+) -> tuple[float, float, float]:
     """Apply a 4x4 homogeneous matrix to a point."""
     p = matrix[:3, :3] @ np.array([x, y, z]) + matrix[:3, 3]
     return float(p[0]), float(p[1]), float(p[2])
@@ -48,7 +52,9 @@ def marker_point_in_header_frame(marker: Marker, point):
     return Point(x=float(x), y=float(y), z=float(z))
 
 
-def distance_to_polyline(point, segments_a: np.ndarray, segments_b: np.ndarray) -> float:
+def distance_to_polyline(
+    point, segments_a: np.ndarray, segments_b: np.ndarray
+) -> float:
     """Minimum distance from ``point`` (x, y) to the polyline given as segment endpoints."""
     if segments_a.size == 0:
         return float("inf")
@@ -56,7 +62,9 @@ def distance_to_polyline(point, segments_a: np.ndarray, segments_b: np.ndarray) 
     ab = segments_b - segments_a
     ap = p - segments_a
     denom = np.einsum("ij,ij->i", ab, ab)
-    t = np.where(denom > 0, np.einsum("ij,ij->i", ap, ab) / np.where(denom > 0, denom, 1.0), 0.0)
+    t = np.where(
+        denom > 0, np.einsum("ij,ij->i", ap, ab) / np.where(denom > 0, denom, 1.0), 0.0
+    )
     t = np.clip(t, 0.0, 1.0)
     closest = segments_a + ab * t[:, None]
     return float(np.min(np.hypot(*(p - closest).T)))
@@ -83,7 +91,10 @@ class Frames:
         """4x4 matrix mapping points in ``source`` into ``target``, or None."""
         try:
             tf_msg = self.buffer.lookup_transform(
-                target, source, rclpy.time.Time(), rclpy.duration.Duration(seconds=timeout)
+                target,
+                source,
+                rclpy.time.Time(),
+                rclpy.duration.Duration(seconds=timeout),
             )
         except Exception as e:  # TransformException and friends
             self.node.get_logger().warning(
@@ -106,7 +117,9 @@ class Frames:
         m = self.matrix(self.map_frame, pose.header.frame_id, timeout=0.2)
         if m is None:
             return None
-        x, y, _ = transform_xyz(m, pose.pose.position.x, pose.pose.position.y, pose.pose.position.z)
+        x, y, _ = transform_xyz(
+            m, pose.pose.position.x, pose.pose.position.y, pose.pose.position.z
+        )
         return x, y
 
     def to_map(self, xyz) -> tuple[float, float] | None:

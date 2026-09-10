@@ -17,7 +17,11 @@ import gpxpy
 import numpy as np
 import yaml
 
-from robot_mission_planner.follower.road_goal import nearest_index, polyline_cumulative, remaining_route_length
+from robot_mission_planner.follower.road_goal import (
+    nearest_index,
+    polyline_cumulative,
+    remaining_route_length,
+)
 
 
 def resolve_file(name: str, search_dirs) -> str:
@@ -25,7 +29,10 @@ def resolve_file(name: str, search_dirs) -> str:
     if os.path.isabs(name):
         return name
     candidates = [os.path.join(d, name) for d in search_dirs]
-    return next((c for c in candidates if os.path.exists(c)), candidates[0] if candidates else name)
+    return next(
+        (c for c in candidates if os.path.exists(c)),
+        candidates[0] if candidates else name,
+    )
 
 
 def load_waypoints(path: str, reverse: bool = False) -> list[dict]:
@@ -46,16 +53,24 @@ def load_waypoints(path: str, reverse: bool = False) -> list[dict]:
         if not points:
             points = [p for r in gpx.routes for p in r.points]
         for wp in points:
-            points_raw.append({"lat": wp.latitude, "lon": wp.longitude, "ele": wp.elevation or 0.0})
+            points_raw.append(
+                {"lat": wp.latitude, "lon": wp.longitude, "ele": wp.elevation or 0.0}
+            )
     elif path.endswith((".yaml", ".yml")):
         with open(path, "r") as f:
             data = yaml.safe_load(f)
         for wp in data.get("waypoints", []):
             points_raw.append(
-                {"lat": wp["latitude"], "lon": wp["longitude"], "ele": wp.get("elevation", 0.0)}
+                {
+                    "lat": wp["latitude"],
+                    "lon": wp["longitude"],
+                    "ele": wp.get("elevation", 0.0),
+                }
             )
     else:
-        raise ValueError(f"unsupported route file '{path}' (expected .gpx, .yaml or .yml)")
+        raise ValueError(
+            f"unsupported route file '{path}' (expected .gpx, .yaml or .yml)"
+        )
     if reverse:
         points_raw.reverse()
     return points_raw
@@ -123,9 +138,15 @@ class Route:
     # ---------------------------------------------------------------- geometry
     def distance_to(self, idx: int, rob_xy) -> float:
         """Distance (m) from ``rob_xy`` to waypoint ``idx``, or ``inf`` if it has no position."""
-        if not (0 <= idx < len(self.map_xy)) or self.map_xy[idx] is None or rob_xy is None:
+        if (
+            not (0 <= idx < len(self.map_xy))
+            or self.map_xy[idx] is None
+            or rob_xy is None
+        ):
             return float("inf")
-        return math.hypot(rob_xy[0] - self.map_xy[idx][0], rob_xy[1] - self.map_xy[idx][1])
+        return math.hypot(
+            rob_xy[0] - self.map_xy[idx][0], rob_xy[1] - self.map_xy[idx][1]
+        )
 
     def direction_at(self, idx: int):
         """Unit vector of the route around waypoint ``idx`` in map_frame, or None."""

@@ -26,28 +26,45 @@ DEFAULT_HOME_FILE = "~/missions/home.txt"
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Publish a Robotour goal (geo:lat,lon or lat,lon).")
+    ap = argparse.ArgumentParser(
+        description="Publish a Robotour goal (geo:lat,lon or lat,lon)."
+    )
     ap.add_argument(
         "payload", nargs="?", help="geo:lat,lon (as printed in the QR code) or lat,lon"
     )
     ap.add_argument(
-        "--home", action="store_true",
+        "--home",
+        action="store_true",
         help="send the home coordinate road_follower recorded at the first goal of the run",
     )
     ap.add_argument(
-        "--home-file", default=DEFAULT_HOME_FILE, help=f"file --home reads (default {DEFAULT_HOME_FILE})"
+        "--home-file",
+        default=DEFAULT_HOME_FILE,
+        help=f"file --home reads (default {DEFAULT_HOME_FILE})",
     )
-    ap.add_argument("--text-topic", default="/qr_goal/text", help="qr_goal node text input")
     ap.add_argument(
-        "--direct", action="store_true", help="publish GeoPointStamped on --goal-topic instead"
+        "--text-topic", default="/qr_goal/text", help="qr_goal node text input"
+    )
+    ap.add_argument(
+        "--direct",
+        action="store_true",
+        help="publish GeoPointStamped on --goal-topic instead",
     )
     ap.add_argument("--goal-topic", default="/qr_goal/goal")
     ap.add_argument("--frame-id", default="wgs84")
-    ap.add_argument("--wait", type=float, default=5.0, help="s to wait for a subscriber before publishing")
     ap.add_argument(
-        "--hold", type=float, default=2.0,
+        "--wait",
+        type=float,
+        default=5.0,
+        help="s to wait for a subscriber before publishing",
+    )
+    ap.add_argument(
+        "--hold",
+        type=float,
+        default=2.0,
         help="s to keep the latched publisher alive afterwards, for subscribers that "
-             "match late (any subscriber ends --wait, not necessarily road_follower)")
+        "match late (any subscriber ends --wait, not necessarily road_follower)",
+    )
     args = ap.parse_args(argv)
 
     if args.home:
@@ -98,7 +115,10 @@ def main(argv=None) -> int:
         while pub.get_subscription_count() == 0 and time.monotonic() - t0 < args.wait:
             rclpy.spin_once(node, timeout_sec=0.1)
         if pub.get_subscription_count() == 0:
-            print(f"warning: nobody subscribed to {where} within {args.wait:g} s", file=sys.stderr)
+            print(
+                f"warning: nobody subscribed to {where} within {args.wait:g} s",
+                file=sys.stderr,
+            )
         pub.publish(msg)
         print(f"published {latlon[0]:.7f}, {latlon[1]:.7f} on {where}")
         # The sample is only retained while this process lives, so hold the node open:

@@ -83,10 +83,14 @@ class MissionSignal(Node):
         # The table lives in the yaml as speech.<EVENT> / sounds.<EVENT>, so the parameters
         # cannot all be declared up front: whatever the config file carries is declared from
         # the overrides, which also lets an event be added without touching this node.
-        super().__init__("mission_signal", automatically_declare_parameters_from_overrides=True)
+        super().__init__(
+            "mission_signal", automatically_declare_parameters_from_overrides=True
+        )
 
         event_topic = self._param("event_topic", "/road_follower/event")
-        self.backend = str(self._param("backend", "speak"))  # speak | aplay | log | gpio
+        self.backend = str(
+            self._param("backend", "speak")
+        )  # speak | aplay | log | gpio
         # speak backend: helhest_bringup nodes/speak.py listens here (sensor_data QoS).
         speak_topic = str(self._param("speak_topic", "/speak/info"))
         # Command the aplay backend runs; the resolved file path is appended to it.
@@ -123,7 +127,11 @@ class MissionSignal(Node):
 
         self.get_logger().info(
             f"mission_signal ready: {event_topic} -> {self.backend} backend"
-            + (f" on {speak_topic}" if self.backend == "speak" else f", sounds in {self.sound_dir}")
+            + (
+                f" on {speak_topic}"
+                if self.backend == "speak"
+                else f", sounds in {self.sound_dir}"
+            )
             + ", table: "
             + ", ".join(f"{k}={v}" for k, v in sorted(self.table.items()) if v)
         )
@@ -138,7 +146,9 @@ class MissionSignal(Node):
 
     def _default_sound_dir(self) -> str:
         try:
-            return os.path.join(get_package_share_directory("robot_mission_planner"), "data")
+            return os.path.join(
+                get_package_share_directory("robot_mission_planner"), "data"
+            )
         except Exception:  # noqa: BLE001 - not built / not sourced: use the source tree
             return os.path.join(os.path.dirname(__file__), "..", "data")
 
@@ -157,7 +167,9 @@ class MissionSignal(Node):
             self._first_message = False
             age = self.get_clock().now().nanoseconds * 1e-9 - self._start
             if self.ignore_latched_s > 0 and age < self.ignore_latched_s:
-                self.get_logger().info(f"Ignoring the latched event {text!r} from before the start")
+                self.get_logger().info(
+                    f"Ignoring the latched event {text!r} from before the start"
+                )
                 return
         name = text.split(":", 1)[0].strip().upper()
         action = self.table.get(name)
@@ -181,7 +193,10 @@ class MissionSignal(Node):
         """Play a wav in a child process; nothing here may block or raise."""
         path = action if os.path.isabs(action) else os.path.join(self.sound_dir, action)
         if not os.path.exists(path):
-            self._warn_once(path, f"No sound file for {event}: {path} (event only logged from now on)")
+            self._warn_once(
+                path,
+                f"No sound file for {event}: {path} (event only logged from now on)",
+            )
             return
         self._reap()
         try:
@@ -193,7 +208,9 @@ class MissionSignal(Node):
                 )
             )
         except Exception as e:  # noqa: BLE001 - no player, no sound card, ...
-            self._warn_once(self.player_command, f"Cannot run '{self.player_command}': {e}")
+            self._warn_once(
+                self.player_command, f"Cannot run '{self.player_command}': {e}"
+            )
 
     def _signal_gpio(self, event: str, action: str) -> None:
         """
@@ -206,7 +223,8 @@ class MissionSignal(Node):
         already works, so only this method has to be filled in.
         """
         self._warn_once(
-            "gpio", f"backend 'gpio' is a placeholder: {event} -> {action} not signalled"
+            "gpio",
+            f"backend 'gpio' is a placeholder: {event} -> {action} not signalled",
         )
 
     def destroy_node(self) -> bool:

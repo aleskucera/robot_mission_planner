@@ -80,12 +80,18 @@ def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
             if ok:
                 for i, text in enumerate(texts):
                     if text:
-                        pts = points[i] if points is not None and i < len(points) else None
+                        pts = (
+                            points[i]
+                            if points is not None and i < len(points)
+                            else None
+                        )
                         out.append((text, pts))
         if not out:
             text, points, _ = detector.detectAndDecode(image)
             if text:
-                out.append((text, points[0] if points is not None and len(points) else None))
+                out.append(
+                    (text, points[0] if points is not None and len(points) else None)
+                )
     except cv2.error:
         return []
     except Exception:  # noqa: BLE001 - a bad frame must never kill the node
@@ -102,7 +108,9 @@ class Debouncer:
     payload decoded from it (possibly none) and returns the payloads to act on.
     """
 
-    def __init__(self, confirm_frames: int = 2, republish_after_s: float = 30.0) -> None:
+    def __init__(
+        self, confirm_frames: int = 2, republish_after_s: float = 30.0
+    ) -> None:
         self.confirm_frames = max(1, int(confirm_frames))
         self.republish_after_s = float(republish_after_s)
         self._streak: dict[str, int] = {}
@@ -146,7 +154,9 @@ def _decode_image_msg(msg, transport: str):
         return data.reshape(h, msg.step)[:, :w].copy()
     if enc in ("bgra8", "rgba8"):
         img = data.reshape(h, msg.step)[:, : w * 4].reshape(h, w, 4)
-        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR if enc == "bgra8" else cv2.COLOR_RGBA2BGR)
+        return cv2.cvtColor(
+            img, cv2.COLOR_BGRA2BGR if enc == "bgra8" else cv2.COLOR_RGBA2BGR
+        )
     if enc.startswith("bayer"):
         raw = data.reshape(h, msg.step)[:, :w].copy()
         code = {
@@ -178,8 +188,12 @@ def main(args=None):
             super().__init__("qr_goal")
             p = self.declare_parameter
             self.image_topic = p("image_topic", "/odin1/image/compressed").value
-            self.transport = p("image_transport", "compressed").value  # compressed | raw
-            self.process_rate = float(p("process_rate", 4.0).value)  # Hz, frames above are dropped
+            self.transport = p(
+                "image_transport", "compressed"
+            ).value  # compressed | raw
+            self.process_rate = float(
+                p("process_rate", 4.0).value
+            )  # Hz, frames above are dropped
             confirm_frames = int(p("confirm_frames", 2).value)
             republish_after = float(p("republish_after_s", 30.0).value)
             self.goal_topic = p("goal_topic", "/qr_goal/goal").value
@@ -195,19 +209,29 @@ def main(args=None):
                 )
                 self.transport = "compressed"
             if cv2 is None:
-                self.get_logger().error("OpenCV (python3-opencv) is missing: camera decoding disabled")
+                self.get_logger().error(
+                    "OpenCV (python3-opencv) is missing: camera decoding disabled"
+                )
 
-            latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-            self.pub_goal = self.create_publisher(GeoPointStamped, self.goal_topic, latched)
+            latched = QoSProfile(
+                depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
+            )
+            self.pub_goal = self.create_publisher(
+                GeoPointStamped, self.goal_topic, latched
+            )
             self.pub_detections = self.create_publisher(String, detections_topic, 10)
             self.pub_annotated = (
-                self.create_publisher(Image, "~/image_annotated", 1) if self.publish_annotated else None
+                self.create_publisher(Image, "~/image_annotated", 1)
+                if self.publish_annotated
+                else None
             )
             # latched: qr_goal_send publishes once and exits before a volatile match would happen
             self.create_subscription(String, text_topic, self._text_cb, latched)
             self.create_service(SetBool, "~/enable", self._enable_cb)
             msg_type = CompressedImage if self.transport == "compressed" else Image
-            self.create_subscription(msg_type, self.image_topic, self._image_cb, qos_profile_sensor_data)
+            self.create_subscription(
+                msg_type, self.image_topic, self._image_cb, qos_profile_sensor_data
+            )
 
             self.debouncer = Debouncer(confirm_frames, republish_after)
             self._last_processed = 0.0
@@ -225,16 +249,24 @@ def main(args=None):
             if not self.enabled or cv2 is None:
                 return
             now = time.monotonic()
-            if self.process_rate > 0 and (now - self._last_processed) < 1.0 / self.process_rate:
+            if (
+                self.process_rate > 0
+                and (now - self._last_processed) < 1.0 / self.process_rate
+            ):
                 return
             self._last_processed = now
             try:
                 image = _decode_image_msg(msg, self.transport)
             except Exception as e:  # noqa: BLE001
-                self.get_logger().warning(f"cannot decode image: {e}", throttle_duration_sec=10.0)
+                self.get_logger().warning(
+                    f"cannot decode image: {e}", throttle_duration_sec=10.0
+                )
                 return
             if image is None:
-                self.get_logger().warning("cannot decode image (unknown encoding?)", throttle_duration_sec=10.0)
+                self.get_logger().warning(
+                    "cannot decode image (unknown encoding?)",
+                    throttle_duration_sec=10.0,
+                )
                 return
             found = decode_qr_with_points(image)
             payloads = [t for t, _ in found]
@@ -253,7 +285,9 @@ def main(args=None):
             if not self.enabled:
                 self.debouncer.reset()
             res.success = True
-            res.message = "qr_goal detection " + ("enabled" if self.enabled else "disabled")
+            res.message = "qr_goal detection " + (
+                "enabled" if self.enabled else "disabled"
+            )
             self.get_logger().info(res.message)
             return res
 
@@ -263,7 +297,9 @@ def main(args=None):
             if latlon is None:
                 if payload not in self._warned_payloads:
                     self._warned_payloads.add(payload)
-                    self.get_logger().warning(f"ignoring {source} payload without a geo position: {payload!r}")
+                    self.get_logger().warning(
+                        f"ignoring {source} payload without a geo position: {payload!r}"
+                    )
                 return
             lat, lon = latlon
             msg = GeoPointStamped()
@@ -272,7 +308,9 @@ def main(args=None):
             msg.position.latitude = lat
             msg.position.longitude = lon
             self.pub_goal.publish(msg)
-            self.get_logger().info(f"GOAL from {source}: {payload!r} -> {lat:.7f}, {lon:.7f} on {self.goal_topic}")
+            self.get_logger().info(
+                f"GOAL from {source}: {payload!r} -> {lat:.7f}, {lon:.7f} on {self.goal_topic}"
+            )
 
         def _publish_annotated(self, image, found, header):
             img = image if image.ndim == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -282,7 +320,15 @@ def main(args=None):
                     poly = np.asarray(pts, dtype=np.int32).reshape(-1, 1, 2)
                     cv2.polylines(img, [poly], True, (0, 255, 0), 3)
                     x, y = poly[0, 0]
-                    cv2.putText(img, text[:40], (int(x), max(20, int(y) - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(
+                        img,
+                        text[:40],
+                        (int(x), max(20, int(y) - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
             out = Image()
             out.header = header
             out.height, out.width = img.shape[:2]
@@ -293,7 +339,10 @@ def main(args=None):
 
         def _heartbeat(self):
             if self._frames == 0:
-                self.get_logger().warning(f"no images received on {self.image_topic} yet", throttle_duration_sec=60.0)
+                self.get_logger().warning(
+                    f"no images received on {self.image_topic} yet",
+                    throttle_duration_sec=60.0,
+                )
 
     rclpy.init(args=args)
     node = QrGoal()
