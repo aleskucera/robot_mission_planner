@@ -103,9 +103,6 @@ GPS_REASON_FINAL = (
 )
 
 # sensor_msgs/NavSatStatus.status -> the suffix the follower appends to its state (F8).
-# Fixposition reports 2 for an RTK fixed solution, 1 for float, 0 for a plain GNSS fix and
-# -1 for none; under trees the float fix plus the OSM centreline offset is what pushes road
-# goals through the route-offset filter, so the operator has to see which one it is.
 FIX_NAMES = {2: "rtk", 1: "float", 0: "gps", -1: "nofix"}
 
 

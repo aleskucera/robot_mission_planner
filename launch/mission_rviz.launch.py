@@ -8,19 +8,10 @@ on the right. Nothing here drives the robot; it only subscribes.
 
     rviz:=false         just the HUD node (someone else runs rviz, e.g. over a tunnel)
     hud:=false          just rviz (a mission_hud is already running elsewhere)
-    description:=true   start a robot_state_publisher here (bags recorded before the
-                        static TF relay of 2026-09-10 carry no URDF frames)
     config:=<path>      another rviz config
     params:=<path>      another mission_hud config (default: config/mission_hud.yaml)
 
 The frames, topics and panel look of the HUD are in config/mission_hud.yaml.
-
-Live, the robot's own robot_state_publisher (tmux-launch on the NUC) provides the
-URDF frames and the NUC's static_tf_relay re-sends them every 5 s, so a late-joining
-rviz gets them without a second description here. Bags recorded before that relay
-(2026-09-02, 2026-09-08) carry no URDF frames, so a replay passes description:=true:
-this launch then brings its own robot_state_publisher, which also turns /joint_states
-into the wheel transforms, stamped from the joint states themselves.
 """
 
 import os
@@ -29,10 +20,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -52,13 +41,6 @@ def generate_launch_description():
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("hud", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        # The Helhest URDF, for the RobotModel display: off, the robot publishes it.
-        DeclareLaunchArgument("description", default_value="false"),
-        DeclareLaunchArgument(
-            "description_model",
-            default_value="helhest.urdf.xacro",
-            description="xacro in helhest_description/urdf",
-        ),
     ]
 
     hud = Node(
@@ -72,31 +54,6 @@ def generate_launch_description():
             {"use_sim_time": LaunchConfiguration("use_sim_time")},
         ],
     )
-    urdf = Command(
-        [
-            "xacro ",
-            PathJoinSubstitution(
-                [
-                    FindPackageShare("helhest_description"),
-                    "urdf",
-                    LaunchConfiguration("description_model"),
-                ]
-            ),
-        ]
-    )
-    description = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        name="robot_state_publisher",
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("description")),
-        parameters=[
-            {
-                "robot_description": ParameterValue(urdf, value_type=str),
-                "use_sim_time": LaunchConfiguration("use_sim_time"),
-            }
-        ],
-    )
     rviz = Node(
         package="rviz2",
         executable="rviz2",
@@ -106,4 +63,4 @@ def generate_launch_description():
         arguments=["-d", LaunchConfiguration("config")],
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
     )
-    return LaunchDescription(args + [hud, description, rviz])
+    return LaunchDescription(args + [hud, rviz])

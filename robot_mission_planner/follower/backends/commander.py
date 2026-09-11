@@ -114,7 +114,7 @@ class CommanderBackend(Backend):
         Make the commander take its sequence from the topic, then call ``then``.
 
         Sent before every sequence, not once: a restarted commander is back at its launch
-        default (2026-09-08 it loaded a GPX file from disk mid-mission), and the call is cheap.
+        default, and the call is cheap.
         """
         cli = self._cli_configure
         if not cli.service_is_ready():
