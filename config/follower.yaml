@@ -94,7 +94,7 @@
     # further along it (see route_stretch_distance below). The goal is always kept
     # road_goal_min_ahead in front of the robot: crl_commander treats a goal inside its
     # 2.5 m arrival box as reached and stops.
-    road_goal_source: "carrot" # carrot | path | route
+    road_goal_source: "route" # carrot | path | route
     carrot_topic: "/cloud_hull_center_marker"
     carrot_type: "marker" # marker | path
     road_goal_min_ahead: 4.0 # m: never send a closer goal
