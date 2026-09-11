@@ -1,10 +1,9 @@
 """A bare nav2 ``FollowPath`` controller (``path_follower``): pure pursuit, no global planner.
 
-What ``road_follower_simple`` drove before the modes were unified. There is no planner and no
-waypoint sequence here, so this backend is for ``mode: road`` only: a pose goal becomes a
-straight path from the robot to it, sampled every ``path_spacing`` metres, because
-path_follower walks the path from the pose nearest the robot and needs the samples in between
-to measure progress. Each new path preempts the previous goal, so the robot never stops.
+What ``road_follower_simple`` drove before the modes were unified. No planner and no waypoint
+sequence, so this backend is for ``mode: road`` only: a pose goal becomes a straight path from
+the robot to it, sampled every ``path_spacing`` metres because path_follower measures progress
+from the pose nearest the robot. Each new path preempts the previous goal, so nothing stops.
 """
 
 import math

@@ -4,14 +4,14 @@
 /**:
   ros__parameters:
     event_topic: "/road_follower/event" # latched String from road_follower
-    # speak: publish the sentence for helhest_bringup nodes/speak.py -> sound_play (needs
-    # the NUC sound.launch running); aplay: play a wav; log: only log; gpio: placeholder
-    # for the light backend (see _signal_gpio in mission_signal.py).
+    # speak: publish the sentence for helhest_bringup nodes/speak.py -> sound_play (needs the
+    # NUC sound.launch running); aplay: play a wav; log: only log; gpio: placeholder for the
+    # light backend (_signal_gpio in mission_signal.py).
     backend: "speak"
     speak_topic: "/speak/info" # speak backend: /speak/info | /speak/warn | /speak/err
     player_command: "aplay -q" # aplay backend: the file path is appended
     sound_dir: "" # aplay backend: empty = the package data/ directory
-    # The event topic is latched, and std_msgs/String carries no stamp: the first message
+    # The event topic is latched and std_msgs/String carries no stamp, so the first message
     # received within this many seconds of the start is taken for the previous run's latched
     # event and dropped (0 = signal everything, including that one).
     ignore_latched_s: 1.0

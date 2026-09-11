@@ -1,15 +1,13 @@
 """
 Scripted state-machine tests for ``road_follower`` against the faithful fake commander.
 
-The 2026-09-08 field test lost minutes to two commander-side stalls that the old replay
-harness could not show (review item F10): the follower's own tests covered geometry and QR
-parsing only, and the fake commander finished sequence windows on a timer. These tests run
-the real ``road_follower`` node against ``demo/fake_commander.py``, which emulates
-crl_commander's SEQUENCE state machine (arrival box, nearest+1 start, consume-without-
-advance, restart back to the launch sequence source), and a simulated robot that only moves
-while the commander has a goal. No bag and no route_planner are needed: the route comes from
-the follower's ``file`` parameter (a GPX written into tmp), the road carrots and the
-intersections are published by the test itself.
+The 2026-09-08 field test lost minutes to two commander-side stalls the old replay harness
+could not show (review item F10). These tests run the real ``road_follower`` node against
+``demo/fake_commander.py``, which emulates crl_commander's SEQUENCE state machine (arrival
+box, nearest+1 start, consume-without-advance, restart back to the launch sequence source),
+and a simulated robot that only moves while the commander has a goal. No bag and no
+route_planner are needed: the route comes from the follower's ``file`` parameter (a GPX
+written into tmp), the carrots and the intersections are published by the test itself.
 
 Scenarios
   a  straight route with one ring   ROAD -> GPS:intersection -> ROAD, no STOP in between,

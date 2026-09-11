@@ -19,9 +19,9 @@ from visualization_msgs.msg import Marker
 _WGS84_A = 6378137.0
 _WGS84_E2 = (1.0 / 298.257223563) * (2.0 - 1.0 / 298.257223563)
 
-# How much the waypoint source frame -> map_frame transform has to move before the waypoints
-# are re-placed (F9): 0.1 m of translation, or a rotation whose matrix moves by this much in
-# the Frobenius norm (~0.04 deg). Below that it is TF noise, not a new ENU origin.
+# How far the waypoint source frame -> map_frame transform has to move before the waypoints
+# are re-placed (F9): below 0.1 m, or ~0.04 deg of rotation (Frobenius norm of the matrix
+# difference), it is TF noise rather than a new ENU origin.
 TF_SHIFT_EPS = 0.1
 TF_ROTATION_EPS = 1e-3
 
@@ -46,7 +46,7 @@ def transform_xyz(
 
 
 def marker_point_in_header_frame(marker: Marker, point):
-    """A Marker ``points[]`` entry expressed in ``marker.header.frame_id`` (they are relative to ``marker.pose``)."""
+    """A Marker ``points[]`` entry (relative to ``marker.pose``) in the marker's own frame."""
     m = numpify(marker.pose)
     x, y, z = transform_xyz(m, point.x, point.y, point.z)
     return Point(x=float(x), y=float(y), z=float(z))
@@ -133,10 +133,10 @@ class Frames:
         """
         Look the source frame -> map_frame transform up again.
 
-        Returns ``"first"`` when it was resolved for the first time, ``"moved"`` when it has
-        changed since (a Fixposition restart re-defines FP_ENU0, its origin being the first fix
-        of the run, and every waypoint would otherwise stay where the old origin put it), and
-        ``None`` when there is nothing to do. The caller re-places whatever it derived from it.
+        ``"first"`` when it was resolved for the first time, ``"moved"`` when it has changed
+        since (a Fixposition restart re-defines FP_ENU0, whose origin is the run's first fix,
+        and every waypoint would otherwise stay where the old origin put it), ``None`` when
+        there is nothing to do. The caller re-places whatever it derived from the transform.
         """
         m = self.matrix(self.map_frame, self.source_frame, timeout=timeout)
         if m is None:

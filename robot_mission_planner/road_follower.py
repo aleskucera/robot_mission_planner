@@ -4,7 +4,7 @@ The follower: it drives the robot along a road, along a route, or both.
 
 Modes (``mode``, see ``follower/modes.py``)
 ------------------------------------------
-road_gps : follow the detected road and hand over to the route's waypoints around OSM
+road_gps : follow the detected road, handing over to the route's waypoints around OSM
            intersections, when the road detection drops out, when the commander reports
            being stuck, and for the final metres to the goal. The Robotour mode.
 gps      : follow the route's waypoints from beginning to end, never look at the road.
@@ -15,29 +15,21 @@ route_planner from a mission goal (a QR code); that is a separate choice, not a 
 
 State machine
 -------------
-ROAD  : follow the visually detected road. The goal is taken from ``road_goal_source``:
-        ``carrot`` (default) drives at the convex-hull centre of the road points in the
-        current lidar frame (``carrot_topic``, a visualization_msgs/Marker from
-        build_point_cloud, or a nav_msgs/Path whose last pose is used); ``path`` takes
-        the predicted road path (``road_points_topic``, nav_msgs/Path from
-        path_centerline); ``route`` stretches the carrot along the planned OSM route
-        (``route_stretch_distance`` further along it, keeping the carrot's own lateral
-        offset from the route), so the goal follows the road's mapped shape while the
-        map is only ever used relative to the robot's own projection on it. Either way
-        the goal is kept at least ``road_goal_min_ahead`` in front of the robot (see
-        ``road_goal.py``), because the commander treats a goal inside its 2.5 m arrival
-        box as already reached and stops.
-GPS   : follow the pre-planned GPX waypoints instead. Entered near an OSM intersection
-        (``intersections_topic``, geometry_msgs/PoseArray from map_data/osm_cloud), when
-        the road path stops arriving (``road_path_timeout``) or when the commander reports
-        being stuck (``stuck_fallback_to_gps``).
+ROAD : follow the visually detected road. ``road_goal_source`` decides where the goal comes
+       from: ``carrot`` (the road points' convex-hull centre, ``carrot_topic``), ``path``
+       (the predicted road path, ``road_points_topic``) or ``route`` (the carrot stretched
+       along the planned OSM route). See ``road_goal.py``; every source keeps the goal at
+       least ``road_goal_min_ahead`` ahead, because the commander treats a goal inside its
+       2.5 m arrival box as already reached and stops.
+GPS  : follow the pre-planned waypoints instead. Entered near an OSM intersection
+       (``intersections_topic``), when the road path stops arriving (``road_path_timeout``)
+       or when the commander reports being stuck (``stuck_fallback_to_gps``).
 
 Navigation backends (``nav_backend``, see ``follower/backends/``)
 ----------------------------------------------------------------
-commander   : the Helhest field stack (crl_commander on the NUC). ROAD goals are published
-              as a PoseStamped on ``goal_waypoint_topic`` in *goto* mode; GPS waypoints are
-              published as a latched PoseArray on ``goal_sequence_topic`` (in ``earth_frame``,
-              ECEF) and the commander is switched to *sequence* mode.
+commander   : the Helhest field stack (crl_commander on the NUC): ROAD goals as a
+              PoseStamped on ``goal_waypoint_topic`` in *goto* mode, GPS waypoints as a
+              latched ECEF PoseArray on ``goal_sequence_topic`` in *sequence* mode.
 nav2        : Nav2 ``NavigateToPose`` / ``FollowWaypoints`` (``FollowGPSWaypoints`` when
               ``use_utm`` is false).
 follow_path : a bare pure-pursuit controller (``path_follower``): each goal becomes a short
@@ -45,11 +37,9 @@ follow_path : a bare pure-pursuit controller (``path_follower``): each goal beco
 
 Frames
 ------
-All geometry is compared in ``map_frame`` (the robot's fixed frame, ``FP_ENU0`` on
-Helhest). Intersections and road paths may arrive in any TF-connected frame; they are
-transformed with TF. GPX waypoints are converted lat/lon -> ECEF (``earth_frame``) and
-transformed into ``map_frame`` through TF (commander backend), or lat/lon -> UTM and then
-``utm_frame`` -> ``map_frame`` (nav2 backend with ``use_utm``).
+All geometry is compared in ``map_frame`` (``FP_ENU0`` on Helhest); everything else is
+brought into it with TF. Intersections and road paths may arrive in any TF-connected frame,
+and waypoints go through lat/lon -> ECEF (commander) or lat/lon -> UTM (nav2, ``use_utm``).
 """
 
 import contextlib
@@ -120,13 +110,11 @@ class RoadFollower(Node):
         self._active_intersection = None
 
         # --- Mode ---
-        # road_gps: road following with GPS waypoints at intersections; gps: the route only;
-        # road: the road only, with no route at all.
-        self.declare_parameter("mode", default_mode)
+        self.declare_parameter("mode", default_mode)  # road_gps | gps | road
 
         # --- Backend ---
-        # "commander" (crl_commander on the NUC), "nav2" (NavigateToPose + FollowWaypoints)
-        # or "follow_path" (a bare pure-pursuit controller, road following only).
+        # commander (crl_commander on the NUC) | nav2 (NavigateToPose + FollowWaypoints) |
+        # follow_path (a bare pure-pursuit controller, road following only).
         self.declare_parameter("nav_backend", "commander")
         self.declare_parameter("follow_path_action", "follow_path")
         self.declare_parameter(
@@ -162,9 +150,8 @@ class RoadFollower(Node):
         # latched PoseStamped in map_frame of the intersection that triggered GPS mode
         # (empty frame_id = none); the map_data viewer draws the enter/exit circles around it
         self.declare_parameter("active_intersection_topic", "~/active_intersection")
-        # Trigger service that stops the current leg from any state (F7): commander STOP,
-        # every pending timer cancelled, back to IDLE. Cheaper than the e-stop, which costs
-        # 5 points in the competition.
+        # Stops the current leg from any state (F7): commander STOP, pending timers
+        # cancelled, back to IDLE. Cheaper than the e-stop, which costs 5 points.
         self.declare_parameter("abort_service", "~/abort")
         self.declare_parameter("switch_mode_service", "/crl_commander/switch_mode")
         self.declare_parameter(
@@ -191,7 +178,7 @@ class RoadFollower(Node):
         )  # m: from all intersections
         # Only intersections this close (m) to the planned route take part in the enter/exit
         # decisions (P4): a ring on a side junction the route merely drives past is not ours
-        # (273 rings in kralovska_obora, 16 m apart). 0 = every ring counts, as before.
+        # (273 of them in kralovska_obora). 0 = every ring counts.
         self.declare_parameter("intersection_route_max_offset", 3.0)
         self.declare_parameter("gps_goal_threshold", 3.0)  # m: waypoint reached
         self.declare_parameter(
@@ -209,16 +196,14 @@ class RoadFollower(Node):
         # Road-goal sanity: reject goals farther than this from the planned route (0 = off)
         # or behind the robot, so a bad segmentation cannot pull us off the mission.
         self.declare_parameter("road_goal_max_route_offset", 5.0)
-        # The robot itself drives up to ~5 m off the OSM centreline under trees, so the
-        # limit is relative: a goal may be margin farther off the route than the robot is,
-        # never more than the hard limit (0 = no hard limit).
+        # The robot itself drives up to ~5 m off the OSM centreline under trees, so the limit
+        # is relative: margin farther off than the robot is, capped by the hard limit.
         self.declare_parameter("road_goal_route_offset_margin", 2.0)
         self.declare_parameter("road_goal_max_route_offset_hard", 10.0)
         self.declare_parameter("road_goal_reject_behind", True)
         # Where the ROAD goal comes from: "carrot" = one road-centre point per lidar frame
-        # (convex-hull centre from build_point_cloud), "path" = the fitted/extrapolated
-        # /predicted_path_ls from path_predictor, "route" = the carrot projected on the
-        # planned OSM route and stretched route_stretch_distance further along it.
+        # (convex-hull centre from build_point_cloud), "path" = /predicted_path_ls from
+        # path_predictor, "route" = the carrot stretched along the planned OSM route.
         self.declare_parameter("road_goal_source", "carrot")
         self.declare_parameter("carrot_topic", "/cloud_hull_center_marker")
         self.declare_parameter("carrot_type", "marker")  # marker | path (last pose)
@@ -232,13 +217,12 @@ class RoadFollower(Node):
         # Commander backend: forget the active road goal once this close to it, so the
         # next observation re-sends one (the commander's own arrival box is 2.5 m).
         self.declare_parameter("road_goal_reached_distance", 2.5)
-        # road_goal_source "route": how far along the planned route (m) past the robot /
-        # carrot projection the goal is placed, how much of the carrot's lateral offset from
-        # the route is carried over to it, the sharpest corner (deg) the stretch may reach
-        # past (0 = no limit) and how many waypoints around the current index are searched
-        # when projecting (0 = the whole route; a route folding back on itself needs a
-        # window). Without a carrot the goal keeps the robot's own offset instead, which
-        # drives the mapped route blind: off by default.
+        # road_goal_source "route": how far (m) along the route past the robot / carrot
+        # projection the goal goes, how much of the carrot's lateral offset is carried over
+        # to it, the sharpest corner (deg) the stretch may pass (0 = no limit) and how many
+        # waypoints around the current index are searched when projecting (0 = all of them;
+        # a route folding back on itself needs a window). route_goal_without_carrot keeps
+        # driving the mapped route blind, at the robot's own offset: off by default.
         self.declare_parameter("route_stretch_distance", 6.0)
         self.declare_parameter("route_lateral_gain", 1.0)
         self.declare_parameter("route_stretch_max_turn", 45.0)
@@ -257,26 +241,23 @@ class RoadFollower(Node):
         self.declare_parameter(
             "gps_sequence_window", 0
         )  # waypoints per sequence (0 = all)
-        # ROAD <-> GPS hand-over (commander backend). The commander's own mode transition
-        # cancels the old goal, so the new goal is sent directly (goto <-> sequence) with no
-        # STOP in between; stop_between_modes restores the old STOP + delay behaviour and
-        # transition_delay adds a pause before the new goal is sent (s).
+        # ROAD <-> GPS hand-over (commander backend): the commander's own mode transition
+        # cancels the old goal, so goto <-> sequence goes out with no STOP in between.
+        # stop_between_modes restores the STOP, transition_delay adds a pause (s).
         self.declare_parameter("stop_between_modes", False)
         self.declare_parameter("transition_delay", 0.0)
         # A gap this long (s) on commander_state_topic means the commander was restarted:
-        # its sequence source is back at the launch default and the goal is gone, so the
-        # sequence is re-configured and the current goal re-sent.
+        # its sequence source is back at the launch default, so re-configure and re-send.
         self.declare_parameter("commander_restart_gap", 5.0)
-        # The waypoint frame -> map_frame transform is looked up again every this many
-        # seconds (F9): a Fixposition restart moves FP_ENU0 and every waypoint placed in it
-        # would be wrong until the follower is restarted. 0 = resolve once, as before.
+        # The waypoint frame -> map_frame transform is looked up again this often (F9): a
+        # Fixposition restart moves FP_ENU0, and with it every waypoint placed there.
+        # 0 = resolve once.
         self.declare_parameter("waypoint_tf_recheck_period", 10.0)
 
         # --- Mission (Robotour): QR goal -> route_planner -> follow -> arrive -> idle ---
         # With no `file`, the follower idles until a goal arrives on qr_goal_topic, asks
         # plan_route_action for a route from its own GNSS fix to it, pauses start_delay,
-        # follows, and once within goal_reached_radius of the last waypoint stops and idles
-        # again. QR goals received while not IDLE are ignored.
+        # follows, and idles again within goal_reached_radius of the last waypoint.
         self.declare_parameter(
             "qr_goal_topic", "/qr_goal/goal"
         )  # GeoPointStamped, latched
@@ -305,27 +286,25 @@ class RoadFollower(Node):
             "arrived_hold", 0.0
         )  # s to stay ARRIVED before IDLE (signal later)
         # Final approach: with less route left than this (m) the follower stays in GPS to the
-        # last waypoint. The planner puts that waypoint on the goal coordinate itself, which
-        # can be off the footway (a loading zone on a lawn), where there is no road to follow
-        # and the road goal would pull the robot back onto the path. 0 = off.
+        # last waypoint, which the planner puts on the goal coordinate itself -- possibly off
+        # the footway (a loading zone on a lawn), where there is no road to follow. 0 = off.
         self.declare_parameter("final_approach_distance", 15.0)
         self.declare_parameter(
             "event_topic", "~/event"
         )  # latched String mission events
-        # Home capture (R3): the fix at the first goal of a run is the service area, which
-        # the return leg has to come back to. It is written to mission_dir (where
-        # route_planner keeps its GPX files as well) and published latched on home_topic,
-        # so the return goal can be sent with `qr_goal_send --home` instead of typed in.
+        # Home capture (R3): the fix at the first goal of a run is the service area the
+        # return leg comes back to. Written to mission_dir (where route_planner keeps its
+        # GPX files too) and latched on home_topic, so the return goal can be sent with
+        # `qr_goal_send --home` instead of typed in.
         self.declare_parameter("home_topic", "~/home")  # latched GeoPointStamped
         self.declare_parameter("mission_dir", "~/missions")
-        # qr_goal_topic is latched: after a restart the follower would receive the previous
-        # goal again and drive off unprompted. Goals stamped before the node started (minus
-        # this tolerance, s) are ignored; 0 = accept everything.
+        # qr_goal_topic is latched, so a restart would re-deliver the previous run's goal and
+        # the follower would drive off unprompted: goals stamped more than this (s) before
+        # the node started are ignored. 0 = accept everything.
         self.declare_parameter("stale_goal_tolerance", 2.0)
-        # A goal that arrives while the follower is busy is buffered and taken when the leg
-        # ends (qr_goal suppresses the same code for republish_after_s, so it would otherwise
-        # be lost). A goal this close (m) to the one being driven is the same code seen again
-        # and is dropped instead.
+        # A goal arriving while the follower is busy is buffered until the leg ends (qr_goal
+        # suppresses the same code for republish_after_s, so it would otherwise be lost). One
+        # this close (m) to the goal being driven is that same code again, and is dropped.
         self.declare_parameter("pending_goal_min_distance", 2.0)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731
@@ -406,8 +385,8 @@ class RoadFollower(Node):
         self.mission_dir = str(gp("mission_dir"))
 
         # --- TF ---
-        # Waypoints are sent in the backend's own frame (ECEF for the commander, UTM for
-        # nav2) and placed in map_frame through TF; nav2 without use_utm sends lat/lon and
+        # Waypoints go out in the backend's own frame (ECEF for the commander, UTM for nav2)
+        # and are placed in map_frame through TF; nav2 without use_utm sends lat/lon and
         # needs no transform at all.
         self.waypoint_src_frame = (
             self.earth_frame if self.nav_backend == "commander" else self.utm_frame
@@ -624,10 +603,9 @@ class RoadFollower(Node):
         """
         Resolve waypoint source frame -> map_frame and place the waypoints in map_frame.
 
-        Kept running at ``waypoint_tf_recheck_period`` after the first success instead of
-        cancelling the timer: a Fixposition restart re-defines FP_ENU0 (its origin is the
-        first fix of the run), and every waypoint, the route polyline and the cached
-        intersections would stay where the old origin put them.
+        Kept running at ``waypoint_tf_recheck_period`` rather than cancelled after the first
+        success: a Fixposition restart re-defines FP_ENU0, and the waypoints, the route
+        polyline and the cached intersections would stay where the old origin put them.
         """
         what = self.frames.refresh_source()
         if what is None:
@@ -647,8 +625,7 @@ class RoadFollower(Node):
                     self.waypoint_tf_recheck_period, self._resolve_waypoint_transform
                 )
 
-    # The route and the frames the follower measures everything in; the attributes below are
-    # the node's own vocabulary for them.
+    # The node's own vocabulary for the route it drives.
     @property
     def waypoints_raw(self):
         return self.route.raw
@@ -818,10 +795,9 @@ class RoadFollower(Node):
     def _intersections_on_route_in_map(self):
         """
         The intersections that take part in the ROAD <-> GPS decisions: those at most
-        ``intersection_route_max_offset`` from the planned route polyline (P4). Rings on
-        side junctions the route only drives past no longer put the follower into GPS mode.
-        Cached until the intersection array or the route changes; without a route (or with
-        the parameter at 0) every ring counts, as before.
+        ``intersection_route_max_offset`` from the planned route polyline (P4), so a ring on
+        a side junction the route only drives past does not put the follower into GPS mode.
+        Cached until the intersections or the route change; with no route, every ring counts.
         """
         inter = self._intersections_in_map()
         if (
@@ -873,10 +849,10 @@ class RoadFollower(Node):
 
     def _road_input(self):
         """
-        A new road observation arrived. Only a *usable* one (a goal ahead of the robot, on
-        the route) counts as "the road is there": a carrot behind the robot or a path off
-        the route must not keep ROAD mode alive with a stale goal, it should let the
-        ``road_path_timeout`` fallback take the robot along the GPS route instead.
+        A new road observation arrived. Only a *usable* one (a goal ahead of the robot and on
+        the route) counts as "the road is there": a carrot behind the robot or a path off the
+        route must not keep ROAD alive with a stale goal, but let the ``road_path_timeout``
+        fallback take the robot along the GPS route instead.
         """
         candidate = self._road_goal_candidate()
         if candidate is None or not self._road_goal_valid(
@@ -919,14 +895,8 @@ class RoadFollower(Node):
 
     def _route_goal_candidate(self, rob_xy):
         """
-        ROAD goal from the planned route's shape (``road_goal_source: route``).
-
-        The carrot and the robot are projected on the route, the goal is put
-        ``route_stretch_distance`` further along it from whichever projects farther ahead, and
-        the carrot's lateral offset from the route is carried over to it. The route is used
-        relatively only: its absolute position carries the OSM error and the GNSS error (the
-        robot itself drove up to 5.5 m off the mapped centreline on 2026-09-08), and both
-        cancel out because the offset is re-measured against the same route every frame.
+        ROAD goal from the planned route's shape (``road_goal_source: route``); the geometry
+        and why the route is only ever used relatively are in :func:`select_route_goal`.
         ``None`` when there is no route yet, or no usable carrot.
         """
         if len(self.route.polyline) < 2:
@@ -955,9 +925,9 @@ class RoadFollower(Node):
 
     def _route_lateral_limit(self, rob_xy) -> float:
         """
-        How far off the route the ``route`` goal may be placed: the same relative limit the
-        road-goal sanity check uses, so a robot driving 5 m off the mapped centreline (GNSS
-        under trees) may keep that offset instead of being pulled back onto the OSM line.
+        How far off the route the ``route`` goal may be placed: the sanity check's own
+        relative limit, so a robot driving 5 m off the mapped centreline (GNSS under trees)
+        keeps that offset instead of being pulled back onto the OSM line.
         """
         if self.road_goal_max_route_offset <= 0 or not self.route.seg_a.size:
             return 0.0  # 0 = no clamp
@@ -1029,8 +999,7 @@ class RoadFollower(Node):
                 self.STATE_ARRIVED: "ARRIVED",
             }[self.state]
         # F8: the fix quality rides along on the state string ("ROAD [rtk]"), so the HUD and
-        # every log line that names the state say what the position is worth. Readers split
-        # the state off at the first space.
+        # the logs say what the position is worth. Readers split the state off at the space.
         fix = self._fix_name()
         return f"{text} [{fix}]" if fix else text
 
@@ -1253,9 +1222,9 @@ class RoadFollower(Node):
             )
             > 0.5
         ):
-            # The next intersection is closer than the exit ring of the active one (rings
-            # 16 m apart on average, 31 pairs under 6 m in Stromovka): adopt it if it lies
-            # farther along the route, instead of leaving and re-entering GPS mode.
+            # The next intersection is inside the active one's exit ring (rings average 16 m
+            # apart, 31 pairs under 6 m in Stromovka): adopt it if it lies farther along the
+            # route, instead of leaving and re-entering GPS mode.
             next_index = self.route.nearest(closest_xy) if self.waypoints_map else None
             if (
                 self._gps_node_index is None
@@ -1307,8 +1276,8 @@ class RoadFollower(Node):
     def _remaining_route_length(self, rob_xy) -> float:
         """
         Route length (m) from the robot to the last waypoint, or ``inf`` when the final
-        approach does not apply: it is switched off, there is no route yet, or the route
-        loops (a looping file route has no end to approach).
+        approach does not apply: switched off, no route yet, or a looping file route, which
+        has no end to approach.
         """
         if self.final_approach_distance <= 0 or self.loop or not self.waypoints_map:
             return float("inf")
@@ -1327,9 +1296,9 @@ class RoadFollower(Node):
     def _target_intersection(self, intersection_xy):
         """
         Remember which route waypoint the intersection sits at and the route direction
-        *leaving* it. The exit test is "passed the node along the outgoing segment"; the
-        incoming direction would fail at a right-angle turn (dot product ~0) and reverse
-        at a sharper one, keeping the follower in GPS mode for the rest of the leg.
+        *leaving* it: the exit test is "passed the node along the outgoing segment". The
+        incoming direction would fail at a right-angle turn (dot product ~0) and reverse at
+        a sharper one, keeping the follower in GPS mode for the rest of the leg.
         """
         if intersection_xy is not None and self.waypoints_map:
             self._gps_node_index = self.route.nearest(intersection_xy)
@@ -1351,10 +1320,10 @@ class RoadFollower(Node):
 
     def _hand_over(self, mode):
         """
-        Give the backend the goal of the new state. Commander backend: no STOP in between
-        (its transitionTo() cancels the old goal and re-initialises the sequence itself) and
-        no pause unless transition_delay says so, because every stop costs seconds at each
-        of the many intersections. Nav2, or stop_between_modes: cancel first, then wait 1 s.
+        Give the backend the goal of the new state. The commander needs no STOP in between
+        (its transitionTo() cancels the old goal and re-initialises the sequence itself), and
+        a stop would cost seconds at every one of the many intersections. Nav2, or
+        stop_between_modes: cancel first, then wait 1 s.
         """
         if not self.backend.direct_hand_over or self.stop_between_modes:
             self._cancel_current_goal()
@@ -1407,9 +1376,9 @@ class RoadFollower(Node):
     def _take_goal(self, lat: float, lon: float, stamp: float):
         """
         Act on a goal that passed the stale check: plan it when IDLE, else buffer it (F6).
-        Called again from ``_enter_idle`` for the buffered one, so the stale check stays in
-        the subscription callback - a goal that was fresh when it arrived does not go stale
-        while the robot drives the leg before it.
+        ``_enter_idle`` calls this again for the buffered one, which is why the stale check
+        lives in the subscription callback: a goal that was fresh when it arrived must not
+        go stale while the robot drives the leg before it.
         """
         if self.state != self.STATE_IDLE:
             self._buffer_goal(lat, lon, stamp)
@@ -1457,9 +1426,9 @@ class RoadFollower(Node):
     def _capture_home(self):
         """
         Record where the run started (R3): the fix at the first accepted goal is the service
-        area. Written to ``mission_dir`` as ``home_<date>.txt`` and ``home.txt`` (the file
-        ``qr_goal_send --home`` reads) and published latched on ``home_topic``. Once per
-        process; with no fix yet it is simply tried again at the next goal.
+        area. Written to ``mission_dir`` as ``home_<date>.txt`` and ``home.txt`` (what
+        ``qr_goal_send --home`` reads) and latched on ``home_topic``. Once per process; with
+        no fix yet it is simply tried again at the next goal.
         """
         if self._home is not None:
             return
@@ -1569,8 +1538,8 @@ class RoadFollower(Node):
         A PlanRoute attempt failed: retry after plan_retry_delay, or give up on the goal.
 
         ``reason`` is the action's failure reason; one listed in plan_no_retry_reasons
-        (snap_too_far: the goal is farther from any way than route_planner's
-        goal_max_snap_distance) will not change on a retry and ends the goal at once.
+        (snap_too_far: the goal is farther from any way than route_planner allows) cannot
+        change on a retry, so it ends the goal at once.
         """
         if self.state != self.STATE_PLANNING:
             return
@@ -1629,9 +1598,8 @@ class RoadFollower(Node):
     def _abort_callback(self, request, response):
         """
         ``~/abort``: give up the current leg from wherever we are. The commander is stopped,
-        the planning / start-delay / hand-over timers are dropped and a PlanRoute goal still
-        in flight is cancelled, so nothing can revive the leg after the operator asked to
-        stop. The follower is then IDLE and takes the next QR goal as usual.
+        every pending timer is dropped and a PlanRoute goal in flight is cancelled, so
+        nothing can revive the leg; the follower is then IDLE and takes the next QR goal.
         """
         left = self._state_text()
         self.get_logger().warning(f"Abort requested while {left}")
@@ -1700,9 +1668,8 @@ class RoadFollower(Node):
             if (self.road_goal_max_route_offset > 0 or self.road_goal_reject_behind)
             else None
         )
-        # The "route" goal sits on the route by construction, so the offset test would always
-        # pass; what it is there to catch -- a road detection that is not our road -- is the
-        # carrot, and that is what is measured instead.
+        # A "route" goal sits on the route by construction, so the offset test would always
+        # pass: measure the carrot instead, which is what can be the wrong road.
         checked, what = goal_xy, "goal"
         if self.road_goal_source == "route" and self._latest_carrot is not None:
             checked, what = self._latest_carrot, "carrot"
@@ -1786,10 +1753,9 @@ class RoadFollower(Node):
         if pose is not None:
             self._sync_waypoint_index_to_closest(pose[:2])
         start = self.current_waypoint_index
-        # The commander starts a sequence at nearest+1 (sequence_start_from_next), so the
-        # first driven goal is ~2 waypoints (6 m) past the current index. A one-waypoint
-        # sequence therefore has nothing to drive to: the commander answers STOP at once and
-        # the follower re-sends it every tick (the robot stands 1-2 m short of the end).
+        # The commander starts a sequence at nearest+1 (sequence_start_from_next), so a
+        # one-waypoint sequence has nothing to drive to: it answers STOP at once, the
+        # follower re-sends every tick and the robot stands 1-2 m short of the end.
         # Always send at least the last two waypoints.
         if len(self.waypoints) >= 2:
             start = min(start, len(self.waypoints) - 2)

@@ -2,20 +2,19 @@
 """
 qr_goal: turn a Robotour goal QR code into a route_planner goal.
 
-The competition hands the goal over as a QR code whose payload is a geo URI
-(RFC 5870), e.g. ``geo:48.8016394,16.8011145``. This node reads the robot camera,
-decodes QR codes with OpenCV, parses the payload and publishes the position as a
-latched ``geographic_msgs/GeoPointStamped`` on ``/qr_goal/goal`` - ``road_follower``
-then asks ``route_planner`` for a route from its fix to it and follows it. The same payload can
-be typed in on ``~/text`` (see ``qr_goal_send``) for the loading-zone goal, which
-the team receives in the service area.
+The competition hands the goal over as a QR code whose payload is a geo URI (RFC 5870),
+e.g. ``geo:48.8016394,16.8011145``. This node reads the robot camera, decodes QR codes with
+OpenCV and publishes the position as a latched ``geographic_msgs/GeoPointStamped`` on
+``/qr_goal/goal``, which ``road_follower`` then plans a route to and follows. The same
+payload can be typed in on ``~/text`` (see ``qr_goal_send``) for the loading-zone goal the
+team receives in the service area.
 
-A payload is *confirmed* when it was decoded in ``confirm_frames`` consecutive
-processed frames, and each distinct payload is published once (again only after
-``republish_after_s``), so a code held in front of the camera does not spam goals.
+A payload is *confirmed* when it was decoded in ``confirm_frames`` consecutive processed
+frames, and each distinct payload is published once (again only after ``republish_after_s``),
+so a code held in front of the camera does not spam goals.
 
-Ported from vras-robotour/osm2qr ``qr2geo.py`` (pyzbar + nav2 FollowGPSWaypoints)
-to OpenCV's ``QRCodeDetector`` and the Helhest route_planner interface.
+Ported from vras-robotour/osm2qr ``qr2geo.py`` (pyzbar + nav2 FollowGPSWaypoints) to
+OpenCV's ``QRCodeDetector`` and the Helhest route_planner interface.
 """
 
 from __future__ import annotations
@@ -42,10 +41,9 @@ def parse_geo_uri(text: str | None) -> tuple[float, float] | None:
     """
     ``(lat, lon)`` from a geo URI or a bare ``lat,lon`` string, else ``None``.
 
-    Accepts an optional altitude and ``;`` parameters (``geo:50.1,14.4,230;u=10``),
-    any case for the scheme and surrounding whitespace. Rejects values outside
-    +-90 / +-180 and the ``0,0`` payload (osm2qr used it as "cancel"; it is never
-    a Robotour goal). Never raises.
+    Accepts an optional altitude and ``;`` parameters (``geo:50.1,14.4,230;u=10``), any case
+    for the scheme and surrounding whitespace. Rejects values outside +-90 / +-180 and the
+    ``0,0`` payload (osm2qr's "cancel"; never a Robotour goal). Never raises.
     """
     if not text:
         return None
@@ -101,11 +99,11 @@ def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
 
 class Debouncer:
     """
-    Confirms payloads seen in ``confirm_frames`` consecutive observations and
-    reports each distinct payload once, again only after ``republish_after_s``.
+    Confirms payloads seen in ``confirm_frames`` consecutive observations and reports each
+    distinct payload once, again only after ``republish_after_s``.
 
-    ``observe(payloads, now)`` is called once per processed frame with every
-    payload decoded from it (possibly none) and returns the payloads to act on.
+    ``observe(payloads, now)`` is called once per processed frame with everything decoded
+    from it (possibly nothing) and returns the payloads to act on.
     """
 
     def __init__(

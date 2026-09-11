@@ -2,41 +2,35 @@
 """
 mission_signal: turn ``road_follower`` mission events into something a bystander notices.
 
-Robotour requires the robot to indicate that it has arrived at the goal, and the
-homologation tests "signalization, manual load, QR-code entry and continue of trial"
-(review R1). The follower already publishes every mission step on ``~/event`` as a latched
-``std_msgs/String`` (``GOAL:lat,lon``, ``PLANNING``, ``ROUTE:...``, ``START``, ``ARRIVED``,
-``CONTINUE``, ``ABORT:<state>``, ``PLAN_FAILED:...``, ``IDLE``); this node maps the event
-*name* (the part before the first ``:``) to an action from a table in
-``config/mission_signal.yaml`` and runs it.
+Robotour requires the robot to indicate that it has arrived at the goal, and homologation
+tests "signalization, manual load, QR-code entry and continue of trial" (review R1). The
+follower publishes every mission step on ``~/event`` as a latched ``std_msgs/String``
+(``GOAL:lat,lon``, ``PLANNING``, ``ROUTE:...``, ``START``, ``ARRIVED``, ``CONTINUE``,
+``ABORT:<state>``, ``PLAN_FAILED:...``, ``IDLE``); this node maps the event *name* (the part
+before the first ``:``) to an action from a table in ``config/mission_signal.yaml``.
 
 Backends (``backend``)
 ----------------------
-speak : (default) say it. ``helhest_bringup``'s ``nodes/speak.py`` subscribes
-        ``std_msgs/String`` on ``/speak/info`` | ``/speak/warn`` | ``/speak/err`` and hands
-        the text to sound_play, so the table holds sentences ("Arrived") and this node only
-        publishes on ``speak_topic``. Needs the NUC's ``sound.launch`` (speaker) to be up;
-        with nothing subscribed the events are still logged.
-aplay : play a wav file with ``aplay`` in a child process, so the node never blocks on
-        audio. Table entries are file names relative to the package ``data/`` directory
-        (``sound_dir``) or absolute paths. A missing file is warned about once and then
-        ignored - an unplugged speaker or a wav that was never copied to the robot must
-        not take the mission node with it.
+speak : (default) publish the sentence on ``speak_topic`` (``/speak/info`` | ``/speak/warn``
+        | ``/speak/err``) for ``helhest_bringup``'s ``nodes/speak.py`` -> sound_play. Needs
+        the NUC's ``sound.launch``; with nothing subscribed the events are still logged.
+aplay : play a wav with ``aplay`` in a child process, so the node never blocks on audio.
+        Table entries are absolute paths or file names under ``sound_dir``; a missing file
+        is warned about once and then ignored, rather than taking the node with it.
 log   : only log the event. Useful in a replay or on a robot without a speaker.
 gpio  : placeholder for the light / GPIO backend, see ``_signal_gpio``.
 
-The table is per backend: ``sounds.<EVENT>`` (wav files) for ``aplay``, ``speech.<EVENT>``
-(sentences) for ``speak``, so switching the backend does not mean rewriting the config.
+The table is per backend -- ``sounds.<EVENT>`` for ``aplay``, ``speech.<EVENT>`` for
+``speak`` -- so switching the backend does not mean rewriting the config.
 
 Latched events
 --------------
-The follower's event topic is latched, so a node started mid-mission immediately receives
-the *last* event of the run, which is usually not news (nobody wants the arrival sound when
-the signal node is restarted after the arrival). ``std_msgs/String`` carries no stamp, so
-the age of that message cannot be measured: the first message received within
-``ignore_latched_s`` of the node start is dropped instead. Limitation: a genuinely new
-event in that first second is dropped with it, and a latched event that arrives later
-(a slow discovery) is played.
+A node started mid-mission immediately receives the *last* event of the run, which is usually
+not news (nobody wants the arrival sound when the signal node is restarted after the
+arrival), and ``std_msgs/String`` carries no stamp to measure its age by. The first message
+received within ``ignore_latched_s`` of the node start is therefore dropped -- including a
+genuinely new event in that first second, and not including a latched one that arrives later
+through slow discovery.
 """
 
 from __future__ import annotations
@@ -51,9 +45,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from std_msgs.msg import String
 
-# Default table: every follower event that is worth a sound. The files do not have to
-# exist - a missing one degrades to a single warning - so the table can be filled in as
-# the wavs are recorded. An empty value switches an event off.
+# Default table: every follower event worth a sound. The files need not exist (a missing one
+# degrades to a single warning), so the table can be filled in as the wavs are recorded.
+# An empty value switches an event off.
 DEFAULT_SOUNDS = {
     "GOAL": "goal.wav",
     "ROUTE": "route.wav",
@@ -80,9 +74,9 @@ BACKENDS = ("speak", "aplay", "log", "gpio")
 
 class MissionSignal(Node):
     def __init__(self) -> None:
-        # The table lives in the yaml as speech.<EVENT> / sounds.<EVENT>, so the parameters
-        # cannot all be declared up front: whatever the config file carries is declared from
-        # the overrides, which also lets an event be added without touching this node.
+        # The table lives in the yaml as speech.<EVENT> / sounds.<EVENT>, so it cannot be
+        # declared up front: declaring from the overrides instead lets an event be added
+        # without touching this node.
         super().__init__(
             "mission_signal", automatically_declare_parameters_from_overrides=True
         )
@@ -217,10 +211,9 @@ class MissionSignal(Node):
         HOOK: light / GPIO backend (R1), not implemented yet.
 
         Drive the signal lamp from here once it is wired: ``event`` is the follower event
-        name (``ARRIVED``, ``CONTINUE``, ...) and ``action`` its table entry, which for this
-        backend is free-form (``"blink:3"``, a GPIO line name, ...) because it never reaches
-        the file system. Everything else - the table, the topic, the latched-event guard -
-        already works, so only this method has to be filled in.
+        name (``ARRIVED``, ``CONTINUE``, ...) and ``action`` its table entry, free-form for
+        this backend (``"blink:3"``, a GPIO line name) since it never reaches the file
+        system. Everything else already works; only this method has to be filled in.
         """
         self._warn_once(
             "gpio",

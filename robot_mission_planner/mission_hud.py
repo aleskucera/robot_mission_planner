@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """Mission HUD: what an operator watches during a Robotour run, as rviz overlays.
 
-Collects the mission and robot topics into two rviz_2d_overlay_msgs/OverlayText
-panels drawn over the 3D view -- ``~/mission`` (follower state, route progress,
-commander, last event, planner, QR goal) top left and ``~/status`` (e-stop,
-control source ROS/RC, measured and commanded velocity, battery, motor temperatures,
-GNSS fix) top right -- plus ``~/robot_body``, a placeholder box marker for replays
-where nothing publishes /robot_description.
+Collects the mission and robot topics into two rviz_2d_overlay_msgs/OverlayText panels drawn
+over the 3D view -- ``~/mission`` (follower state, route progress, commander, last event,
+planner, QR goal) top left and ``~/status`` (e-stop, control source ROS/RC, measured and
+commanded velocity, battery, motor temperatures, GNSS fix) top right -- plus
+``~/robot_body``, a placeholder box marker for replays without /robot_description.
 
-Panel size, position and colours travel inside the OverlayText message, so the
-rviz displays only need the topic; leave their "Overtake Position Properties"
-and "Overtake ... Color Properties" switches off unless you want to move a panel
-from rviz itself.
+Panel size, position and colours travel inside the OverlayText message, so the rviz displays
+only need the topic; leave their "Overtake ... Properties" switches off unless you want to
+move a panel from rviz itself.
 
-Every input is a parameter, so the same node serves the robot and a bag replay.
-TF is always looked up at time zero (= latest available): a bag replays with its
-original stamps, which are nowhere near the node's wall clock.
+Every input is a parameter, so the same node serves the robot and a bag replay. TF is always
+looked up at time zero (= latest available): a bag replays with its original stamps, nowhere
+near the node's wall clock.
 """
 
 from __future__ import annotations
@@ -37,7 +35,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 # Latched publishers (road_follower state/event, route_planner status/route_path) offer
 # RELIABLE + TRANSIENT_LOCAL; everything else is subscribed BEST_EFFORT, which a reliable
-# publisher also satisfies, so a bag replay connects whatever QoS it was recorded with.
+# publisher satisfies too, so a bag replay connects whatever QoS it was recorded with.
 LATCHED = QoSProfile(
     depth=1,
     reliability=QoSReliabilityPolicy.RELIABLE,

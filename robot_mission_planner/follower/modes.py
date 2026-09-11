@@ -3,14 +3,13 @@
 Everything below the mode is shared -- the frames, the route, the road-goal geometry, the
 backend, the mission layer. A mode only says *which* of those take part:
 
-``road_gps``  follow the visually detected road, and hand over to the route's waypoints
-              around OSM intersections, when the road detection drops out, when the
-              commander reports being stuck, and for the last metres to the goal.
-``gps``       follow the route's waypoints from beginning to end and never look at the road.
-``road``      follow the road and nothing else: no route, no intersections, no goal.
+``road_gps``  the visually detected road, handing over to the route's waypoints around OSM
+              intersections, on road-detection loss, on STUCK and for the final approach.
+``gps``       the route's waypoints from beginning to end; the road is never looked at.
+``road``      the road and nothing else: no route, no intersections, no goal.
 
-The route of the two route modes comes either from a file (``file:`` a GPX or YAML) or from
-a mission goal (a QR code -> ``PlanRoute``); that is a separate choice, not a mode.
+The route of the two route modes comes from a file (``file:`` a GPX or YAML) or from a
+mission goal (a QR code -> ``PlanRoute``); that is a separate choice, not a mode.
 """
 
 from dataclasses import dataclass

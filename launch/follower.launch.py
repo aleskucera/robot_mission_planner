@@ -4,21 +4,20 @@
     ros2 launch robot_mission_planner follower.launch.py mode:=gps gps_file:=stromovka.gpx
     ros2 launch robot_mission_planner follower.launch.py mode:=road nav_backend:=follow_path
 
-mode:=road_gps  follow the road, hand over to the route's waypoints at OSM intersections,
-                when the road detection drops out, when the commander reports being stuck and
-                for the final approach (the Robotour mode, the default)
-mode:=gps       follow the route's waypoints only, never look at the road
-mode:=road      follow the road only: no route, no intersections, no goal to arrive at
+mode:=road_gps  the road, handing over to the route's waypoints at OSM intersections, on
+                road-detection loss, on STUCK and for the final approach (Robotour, default)
+mode:=gps       the route's waypoints only, never look at the road
+mode:=road      the road only: no route, no intersections, no goal to arrive at
 
 The route of the two route modes comes from gps_file (a GPX or YAML file); with no file the
 follower waits for a QR goal and has route_planner plan the route to it.
 
 config/follower.yaml holds every parameter and is the file to edit; config/modes/<mode>.yaml
 is loaded on top of it and names only what that mode changes. The arguments below override
-both, and each of them is only applied when it is given, so editing the YAML is enough.
+both, and only when given, so editing the YAML is enough.
 
-The node keeps the name road_follower: /road_follower/state, /road_follower/event and the
-goal topics are what mission_hud, rviz, the map_data viewer and the bag tools listen to.
+The node keeps the name road_follower: mission_hud, rviz, the map_data viewer and the bag
+tools all listen to /road_follower/state, /road_follower/event and the goal topics.
 """
 
 import os

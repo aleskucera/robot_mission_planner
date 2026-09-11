@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate the "QMainWindow State" line of robotour.rviz.
 
-rviz stores its dock arrangement as a hex dump of QMainWindow::saveState(), which
-cannot sensibly be written by hand. This rebuilds the same window out of empty Qt
-docks -- their objectName is what rviz matches, and for an Image display that is
-the display's Name -- arranges them, and prints the hex.
+rviz stores its dock arrangement as a hex dump of QMainWindow::saveState(), which cannot
+sensibly be written by hand. This rebuilds the same window out of empty Qt docks (rviz
+matches them by objectName, which for an Image display is the display's Name), arranges
+them, and prints the hex.
 
     ~/Work/helhest-singularity/exec.sh python3 rviz/make_layout.py [--write robotour.rviz]
 
@@ -29,10 +29,9 @@ from PyQt5.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
-# Sizes of the window the layout is built for. Qt rescales it to the real window, but
-# only within reason: restoring a 1080p layout on the jetson's 1600x900 VNC screen does
-# not fit and Qt drops the image docks into the left column instead, so build it at the
-# smaller size -- growing a layout works, shrinking one does not.
+# Sizes of the window the layout is built for. Qt rescales it to the real window, but only
+# within reason: a 1080p layout does not fit the jetson's 1600x900 VNC screen and Qt drops
+# the image docks into the left column. Growing a layout works, shrinking one does not.
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1600, 900
 DEFAULT_SIDE_WIDTH = 320  # Displays / Views column
 DEFAULT_IMAGE_HEIGHT = 300  # the two camera panels

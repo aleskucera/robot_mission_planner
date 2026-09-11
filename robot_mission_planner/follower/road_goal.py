@@ -1,20 +1,19 @@
 """
 Road-goal selection for the ROAD state of ``road_follower``.
 
-Pure geometry, no ROS imports, so it can be unit-tested without a ROS
-installation. Everything is in the follower's ``map_frame`` (x, y in metres).
+Pure geometry, no ROS imports, so it can be unit-tested without a ROS installation.
+Everything is in the follower's ``map_frame`` (x, y in metres).
 
-The commander (``crl_commander``) treats a goal that is already inside its
-arrival box (``goal_reached_dist_x/y``, 2.5 m on Helhest) as *reached* and
-holds position instead of driving to it. Every selector below therefore
-guarantees that the returned goal is at least ``min_ahead`` metres away from the
-robot: a closer input is pushed outwards along its own bearing, so the robot
-keeps moving in the direction the road perception points to.
+The commander (``crl_commander``) treats a goal already inside its arrival box
+(``goal_reached_dist_x/y``, 2.5 m on Helhest) as *reached* and holds position instead of
+driving to it. Every selector below therefore keeps the goal at least ``min_ahead`` metres
+from the robot: a closer input is pushed outwards along its own bearing, so the robot keeps
+moving the way the road perception points.
 
-Three selectors, one per ``road_goal_source``: :func:`select_carrot_goal` (one road-centre
-point), :func:`select_path_goal` (a predicted road path) and :func:`select_route_goal`, which
-combines the carrot with the *shape* of the planned OSM route -- see its docstring for why the
-route is only ever used relative to the robot's own projection on it.
+One selector per ``road_goal_source``: :func:`select_carrot_goal` (one road-centre point),
+:func:`select_path_goal` (a predicted road path) and :func:`select_route_goal`, which combines
+the carrot with the *shape* of the planned OSM route -- see its docstring for why the route is
+only ever used relative to the robot's own projection on it.
 """
 
 import bisect
@@ -53,13 +52,12 @@ def select_carrot_goal(
     max_ahead: float,
 ) -> Goal | None:
     """
-    Turn a single road-centre point (the convex-hull centre of the road points
-    in the current lidar frame) into a commander goal.
+    Turn a single road-centre point (the convex-hull centre of the road points in the current
+    lidar frame) into a commander goal.
 
-    Returns ``None`` when the carrot is farther than ``max_ahead`` (beyond the
-    sensor range it can only be a projection artefact). A carrot closer than
-    ``min_ahead`` is pushed out to ``min_ahead`` along the robot -> carrot
-    bearing (robot heading if the carrot sits on the robot).
+    ``None`` when the carrot is farther than ``max_ahead``: beyond the sensor range it can
+    only be a projection artefact. A closer one than ``min_ahead`` is pushed out along the
+    robot -> carrot bearing (the robot heading if the carrot sits on the robot).
     """
     d = _dist(robot_xy, carrot_xy)
     if d > max_ahead:
@@ -79,11 +77,10 @@ def select_path_goal(
     """
     Pick the commander goal from a predicted road path (``/predicted_path_ls``).
 
-    The goal is the *last* path point that is at most ``max_ahead`` from the
-    robot. When that point is closer than ``min_ahead`` the path is
-    extrapolated: along its final segment if it has one, otherwise along the
-    robot -> point bearing, until the goal is ``min_ahead`` away. An empty path
-    or a path whose every point is beyond ``max_ahead`` gives ``None``.
+    The goal is the *last* path point at most ``max_ahead`` from the robot. When that point
+    is closer than ``min_ahead`` the path is extrapolated to ``min_ahead``: along its final
+    segment if it has one, otherwise along the robot -> point bearing. An empty path, or one
+    whose every point is beyond ``max_ahead``, gives ``None``.
     """
     if not path_xy:
         return None
@@ -98,9 +95,8 @@ def select_path_goal(
         )
         return end[0], end[1], yaw
 
-    # Extrapolate along the path's own direction when it has one that leads
-    # away from the robot; a path curling back towards the robot is not
-    # continued (that would place the goal behind it).
+    # Extrapolate along the path's own direction when that leads away from the robot; a
+    # path curling back is not continued, since that would put the goal behind it.
     idx = path_xy.index(end)
     if idx > 0 and _dist(path_xy[idx - 1], end) > 1e-6:
         yaw = _bearing(path_xy[idx - 1], end)
@@ -142,9 +138,9 @@ def project_on_route(
     Project ``xy`` on the route polyline: ``(arclength, signed lateral offset)``, the offset
     positive to the left of the direction of travel.
 
-    Only segments within ``window`` waypoints of ``index`` are searched, so a route that comes
-    back close to itself (Stromovka legs run parallel 10 m apart) is projected onto the leg the
-    robot is actually driving. ``None`` for a polyline with fewer than two points.
+    Only segments within ``window`` waypoints of ``index`` are searched, so a route coming back
+    close to itself (Stromovka legs run parallel 10 m apart) is projected onto the leg actually
+    being driven. ``None`` for a polyline with fewer than two points.
     """
     if len(points) < 2 or len(cum) != len(points):
         return None
@@ -168,10 +164,9 @@ def route_point_at(
     points: list[Point], cum: list[float], s: float
 ) -> tuple[Point, float]:
     """
-    ``((x, y), yaw)`` at arclength ``s`` along the polyline. ``s`` outside the route is
-    extrapolated along the first / last segment: the goal may have to be pushed past the end of
-    a short route to stay outside the commander's arrival box (the follower's final approach
-    normally takes over long before that).
+    ``((x, y), yaw)`` at arclength ``s`` along the polyline. An ``s`` outside the route is
+    extrapolated along the first / last segment, so a goal can be pushed past the end of a
+    short route to stay outside the commander's arrival box.
 
     Exactly on a vertex the *incoming* segment gives the heading (and with it the normal the
     lateral offset is applied along), so a goal clamped at a corner still faces the way the
@@ -196,10 +191,10 @@ def turn_limited_arclength(
     points: list[Point], cum: list[float], s_from: float, s_to: float, max_turn: float
 ) -> float:
     """
-    Cut ``s_to`` back to the first route vertex whose segment heading differs from the heading
-    at ``s_from`` by more than ``max_turn`` (rad): the goal must not sit around a corner, where
-    the local planner cannot see and the road perception does not reach. ``max_turn <= 0`` = no
-    limit.
+    Cut ``s_to`` back to the first route vertex whose segment heading differs from the one at
+    ``s_from`` by more than ``max_turn`` (rad): the goal must not sit around a corner, where
+    the local planner cannot see and the road perception does not reach. ``max_turn <= 0``
+    means no limit.
     """
     if max_turn <= 0.0 or s_to <= s_from or len(points) < 2:
         return s_to
@@ -232,20 +227,19 @@ def select_route_goal(
     """
     Road goal from the *shape* of the planned OSM route, placed by the road perception.
 
-    The route is used relatively, never as an absolute position: both the robot and the carrot
-    (the convex-hull centre of the road points) are projected onto it, and the goal is put
-    ``stretch`` metres further along the route from whichever of the two is ahead, carrying the
-    carrot's own lateral offset (``lateral_gain`` of it, clamped to ``lateral_limit``, 0 = no
-    clamp) over to that point. So the map contributes the direction the road takes -- which a
-    hull centre lagging behind the robot cannot supply -- while the offset between the map and
-    the real drivable surface (GNSS error plus OSM error, up to ~5 m under trees) is measured
-    by the lidar every frame and reproduced at the goal.
+    Robot and carrot (the convex-hull centre of the road points) are both projected onto the
+    route; the goal goes ``stretch`` metres further along it from whichever is ahead, carrying
+    over the carrot's own lateral offset (``lateral_gain`` of it, clamped to ``lateral_limit``,
+    0 = no clamp). The map thus contributes only the direction the road takes, which a hull
+    centre lagging behind the robot cannot supply, while the offset between the map and the
+    real drivable surface (GNSS plus OSM error, up to ~5 m under trees) is re-measured by the
+    lidar every frame -- the route is never used as an absolute position.
 
-    The result is kept at least ``min_ahead`` from the robot (a nearer goal sits inside the
-    commander's arrival box and stops it, which wins over every other limit here) and, if that
-    allows, at most ``max_ahead`` from it and before the first corner sharper than ``max_turn``.
-    ``None`` when there is no usable route, or when even the start of the stretch is farther
-    than ``max_ahead`` (the projection cannot be trusted then).
+    The result stays at least ``min_ahead`` from the robot, which wins over every other limit
+    here (a nearer goal sits inside the commander's arrival box and stops it), and where that
+    allows within ``max_ahead`` and before the first corner sharper than ``max_turn``. ``None``
+    without a usable route, or when even the start of the stretch is beyond ``max_ahead``: the
+    projection cannot be trusted then.
     """
     proj_r = project_on_route(points, cum, robot_xy, index, window)
     if proj_r is None:
@@ -337,11 +331,10 @@ def remaining_route_length(
 ) -> float:
     """
     Route length still ahead: robot -> waypoint ``current_index`` -> ... -> last waypoint.
+    Drives the final approach, where the route leaves the footway towards the goal itself.
 
-    Used for the final approach (the follower stays in GPS for the last few metres, where
-    the route leaves the footway towards the goal itself). ``None`` entries (waypoints
-    without a map transform yet) are skipped and an empty route gives ``inf``, so a caller
-    comparing against a threshold never triggers on missing data.
+    Waypoints without a map position yet are skipped and an empty route gives ``inf``, so a
+    caller comparing against a threshold never triggers on missing data.
     """
     if not waypoints_xy:
         return float("inf")
@@ -393,10 +386,10 @@ def route_offset_limit(
     robot_offset: float | None, base_limit: float, margin: float, hard_limit: float
 ) -> float:
     """
-    How far off the planned route a road goal may be: at least ``base_limit``, or the
-    robot's own offset plus ``margin`` when the robot is already farther off the OSM line
-    than that (a correct carrot 2 m ahead on the real path sits next to the robot, not
-    on the map centreline), capped at ``hard_limit`` (``<= 0`` = no cap).
+    How far off the planned route a road goal may be: at least ``base_limit``, or the robot's
+    own offset plus ``margin`` when the robot is already farther off the OSM line than that
+    (a correct carrot ahead on the real path sits next to the robot, not on the map
+    centreline), capped at ``hard_limit`` (``<= 0`` = no cap).
     """
     limit = base_limit
     if robot_offset is not None and math.isfinite(robot_offset):
@@ -421,12 +414,10 @@ def indices_near_polyline(
     points: list[Point], polyline: list[Point], max_distance: float
 ) -> list[int]:
     """
-    Indices of the points that lie at most ``max_distance`` from ``polyline`` (its
-    vertices, in order).
-
-    Used to keep only the OSM intersections that sit on the planned route: a ring on a
-    side junction the route merely drives past is not ours. ``max_distance <= 0`` or a
-    polyline with fewer than two vertices means "no filter": every index is returned.
+    Indices of the points at most ``max_distance`` from ``polyline`` (its vertices, in order)
+    -- the OSM intersections that sit on the planned route, a ring on a side junction the
+    route merely drives past not being ours. ``max_distance <= 0``, or a polyline with fewer
+    than two vertices, means "no filter": every index is returned.
     """
     if max_distance <= 0.0 or len(polyline) < 2:
         return list(range(len(points)))

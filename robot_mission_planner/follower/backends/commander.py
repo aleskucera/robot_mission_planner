@@ -20,9 +20,7 @@ class CommanderBackend(Backend):
     """
 
     kind = "commander"
-    direct_hand_over = (
-        True  # transitionTo() cancels the old goal and re-inits the sequence
-    )
+    direct_hand_over = True  # transitionTo() cancels the old goal itself
 
     def __init__(
         self,

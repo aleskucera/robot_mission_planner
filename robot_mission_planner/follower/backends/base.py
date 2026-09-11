@@ -15,16 +15,10 @@ class Backend:
     """
 
     kind = "base"
-    geo_goals = (
-        False  # True: waypoints go out as lat/lon and need no map_frame placement
-    )
-    supports_sequence = True  # False: the backend can only be given one pose at a time
-    reports_progress = (
-        False  # True: action feedback carries the waypoint index / distance
-    )
-    direct_hand_over = (
-        False  # True: a new goal replaces the old one without stopping first
-    )
+    geo_goals = False  # True: waypoints go out as lat/lon, no map_frame placement
+    supports_sequence = True  # False: only one pose can be given at a time
+    reports_progress = False  # True: action feedback carries the waypoint index
+    direct_hand_over = False  # True: a new goal replaces the old one without a stop
 
     def __init__(self, node, frames):
         self.node = node
