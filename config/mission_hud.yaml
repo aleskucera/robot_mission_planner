@@ -17,6 +17,17 @@
     battery_topic: "/battery_state"
     temperature_topic: "/temperatures"
     gps_fix_topic: "/fixposition/odometry_llh"
+    # Control source (status panel): helhest_llc republishes the RC receiver as /joy and
+    # button 10 is the take-over switch -- held = the LLC drives from the sticks and
+    # ignores /cmd_vel, released = ROS drives.
+    joy_topic: "/joy"
+    rc_override_button: 10
+    # Velocity rows (status panel): measured forward speed and yaw rate from the wheel
+    # odometry (twist in base_link) and the commanded /cmd_vel (TwistStamped).
+    odom_topic: "/odom_2d"
+    cmd_vel_topic: "/cmd_vel"
+    # /joy, odometry and /cmd_vel older than this [s] show as unknown / silent.
+    stale_timeout: 1.0
 
     # Panel look. Sizes are in pixels of the 3D render panel.
     text_size: 12.0
@@ -27,10 +38,8 @@
     font: "DejaVu Sans Mono"
     markup: true # false if a future rviz build draws the markup verbatim
     rate: 4.0 # Hz
-    # Last line of the mission panel: how the operator intervenes. The NUC robotour tmux
-    # session keeps the abort service call in the history of the follower window's second
-    # pane; showing the next QR code is the continue signal. "" = no line.
-    hint: "abort: Up+Enter, follower pane 2 | go on: next QR"
+    # Optional last line of the mission panel, free text. "" = no line.
+    hint: ""
 
     # Placeholder body box: only useful with description:=false and nothing else publishing
     # /robot_description (the rviz RobotModel display is off to match).

@@ -4,8 +4,9 @@
 Collects the mission and robot topics into two rviz_2d_overlay_msgs/OverlayText
 panels drawn over the 3D view -- ``~/mission`` (follower state, route progress,
 commander, last event, planner, QR goal) top left and ``~/status`` (e-stop,
-battery, motor temperatures, GNSS fix) top right -- plus ``~/robot_body``, a
-placeholder box marker for replays where nothing publishes /robot_description.
+control source ROS/RC, measured and commanded velocity, battery, motor temperatures,
+GNSS fix) top right -- plus ``~/robot_body``, a placeholder box marker for replays
+where nothing publishes /robot_description.
 
 Panel size, position and colours travel inside the OverlayText message, so the
 rviz displays only need the topic; leave their "Overtake Position Properties"
@@ -23,12 +24,13 @@ import math
 
 import rclpy
 from geographic_msgs.msg import GeoPointStamped
-from nav_msgs.msg import Path
+from geometry_msgs.msg import Twist, TwistStamped
+from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
 from rviz_2d_overlay_msgs.msg import OverlayText
-from sensor_msgs.msg import BatteryState, NavSatFix, NavSatStatus, Temperature
+from sensor_msgs.msg import BatteryState, Joy, NavSatFix, NavSatStatus, Temperature
 from std_msgs.msg import Bool, ColorRGBA, String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
@@ -92,6 +94,15 @@ class MissionHud(Node):
         battery = p("battery_topic", "/battery_state").value
         temperature = p("temperature_topic", "/temperatures").value
         gps_fix = p("gps_fix_topic", "/fixposition/odometry_llh").value
+        # helhest_llc republishes the RC receiver as /joy. The take-over switch is a
+        # held button: while it is 1 the LLC drives from the sticks, ignoring /cmd_vel.
+        joy = p("joy_topic", "/joy").value
+        self.rc_button = int(p("rc_override_button", 10).value)
+        # Measured (wheel odometry, twist in the robot frame) and commanded velocity.
+        odom = p("odom_topic", "/odom_2d").value
+        cmd_vel = p("cmd_vel_topic", "/cmd_vel").value
+        # /joy, odometry and /cmd_vel are streams: older than this [s] = not shown.
+        self.stale_timeout = float(p("stale_timeout", 1.0).value)
 
         # ---- panel look. Sizes are in pixels of the 3D render panel.
         self.text_size = float(p("text_size", 12.0).value)
@@ -106,10 +117,8 @@ class MissionHud(Node):
         # future rviz build draws the markup verbatim.
         self.markup = bool(p("markup", True).value)
         self.rate = float(p("rate", 4.0).value)
-        # Last line of the mission panel: how the operator intervenes ("" = no line).
-        self.hint = str(
-            p("hint", "abort: Up+Enter in the follower window, pane 2").value
-        )
+        # Optional last line of the mission panel ("" = no line).
+        self.hint = str(p("hint", "").value)
 
         # ---- placeholder robot body (a URDF on /robot_description is the real thing)
         self.body_enabled = bool(p("robot_body", True).value)
@@ -132,6 +141,12 @@ class MissionHud(Node):
         self._battery: BatteryState | None = None
         self._temps: dict[str, float] = {}
         self._fix: NavSatFix | None = None
+        self._rc_override: bool | None = None
+        self._joy_at = None
+        self._odom: Twist | None = None
+        self._odom_at = None
+        self._cmd: Twist | None = None
+        self._cmd_at = None
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -162,6 +177,9 @@ class MissionHud(Node):
         sub(battery, BatteryState, lambda m: setattr(self, "_battery", m), PLAIN)
         sub(temperature, Temperature, self._temperature_cb, PLAIN)
         sub(gps_fix, NavSatFix, lambda m: setattr(self, "_fix", m), PLAIN)
+        sub(joy, Joy, self._joy_cb, PLAIN)
+        sub(odom, Odometry, self._odom_cb, PLAIN)
+        sub(cmd_vel, TwistStamped, self._cmd_cb, PLAIN)
 
         self.pub_mission = self.create_publisher(OverlayText, "~/mission", 1)
         self.pub_status = self.create_publisher(OverlayText, "~/status", 1)
@@ -182,6 +200,21 @@ class MissionHud(Node):
     def _temperature_cb(self, msg: Temperature) -> None:
         self._temps[msg.header.frame_id or "?"] = msg.temperature
 
+    def _joy_cb(self, msg: Joy) -> None:
+        if self.rc_button < len(msg.buttons):
+            self._rc_override = bool(msg.buttons[self.rc_button])
+        else:
+            self._rc_override = None
+        self._joy_at = self.get_clock().now()
+
+    def _odom_cb(self, msg: Odometry) -> None:
+        self._odom = msg.twist.twist
+        self._odom_at = self.get_clock().now()
+
+    def _cmd_cb(self, msg: TwistStamped) -> None:
+        self._cmd = msg.twist
+        self._cmd_at = self.get_clock().now()
+
     # ------------------------------------------------------------------ helpers
     def _color(self, text: str, color: str) -> str:
         return f'<span style="color:{color};">{text}</span>' if self.markup else text
@@ -191,6 +224,22 @@ class MissionHud(Node):
         if len(value) > room:
             value = value[: room - 1] + "\u2026"
         return f"{self._color(f'{label:<10}', GREY)}{self._color(value, color)}"
+
+    def _age(self, at) -> float | None:
+        """Seconds since ``at`` (a receive time), None if nothing was received yet."""
+        if at is None:
+            return None
+        return (self.get_clock().now() - at).nanoseconds / 1e9
+
+    def _twist_row(self, label: str, twist: Twist | None, at) -> str:
+        age = self._age(at)
+        if twist is None or age is None:
+            return self._row(label, "-", GREY)
+        if age > self.stale_timeout:
+            return self._row(label, f"-   (silent {age:.0f} s)", GREY)
+        return self._row(
+            label, f"{twist.linear.x:+.2f} m/s   {twist.angular.z:+.2f} rad/s"
+        )
 
     def _robot_xy(self, frame: str) -> tuple[float, float] | None:
         try:
@@ -281,6 +330,21 @@ class MissionHud(Node):
         else:
             estop, estop_color = "released", GREEN
         lines = [self._row("E-STOP", estop, estop_color)]
+
+        control, color = "unknown (no /joy)", GREY
+        age = self._age(self._joy_at)
+        if age is not None:
+            if age > self.stale_timeout:
+                control, color = f"unknown (/joy silent {age:.0f} s)", AMBER
+            elif self._rc_override is None:
+                control, color = f"unknown (/joy has no button {self.rc_button})", AMBER
+            elif self._rc_override:
+                control, color = "RC CONTROLLER   (/cmd_vel ignored)", AMBER
+            else:
+                control, color = "ROS   (/cmd_vel)", GREEN
+        lines.append(self._row("control", control, color))
+        lines.append(self._twist_row("velocity", self._odom, self._odom_at))
+        lines.append(self._twist_row("cmd_vel", self._cmd, self._cmd_at))
 
         battery = "-"
         color = WHITE
