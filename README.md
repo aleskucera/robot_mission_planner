@@ -253,20 +253,28 @@ Nothing in it commands the robot.
   so a compressed stream is named in full and there is no transport property to set.
 * **3D view** — the Helhest URDF (`helhest_description`; live it comes from the robot
   through the NUC's static TF relay, `description:=true` starts a `robot_state_publisher`
-  here for bags recorded without it), the planned route and its
-  waypoints, the current `/goal_waypoint` and GPS sequence, the active intersection, the
+  here for bags recorded without it), the route being followed (`/road_follower/route_path`,
+  from a file or planned) and its waypoints, the current `/goal_waypoint` and GPS sequence, the active intersection, the
   OSM footway cloud and intersections from `osm_cloud`, `/terrain_occupancy` as the
   traversability costmap, `/predicted_path_ls` and the hull-centre carrot. Off by default:
   the dense `/terrain_map` cloud and the `/road_cloud` / `/road_map_2` clouds (cloudini
   transport, which only the robot has).
-* **Overlays** — left: follower state, route progress, commander state, last mission
-  event, planner status, QR goal and an optional `hint` line (a parameter, off by
+* **Overlays** — left: follower state, route progress, route source (`file <name>` or
+  `route_planner`), commander state, last mission event, planner status, QR goal (both
+  greyed out while a file route is driven: they describe the last planned mission) and an
+  optional `hint` line (a parameter, off by
   default); right: e-stop (the panel turns red when it is in), control source (`ROS`,
   or `RC CONTROLLER` while `/joy` button 10, the take-over switch, is held), measured
   velocity (`/odom_2d`) and the commanded `/cmd_vel`, battery, the hottest motor
   temperature, GNSS position and fix. `mission_hud` builds
   both from the mission and robot topics, every one a parameter; route progress comes
   from the route path and tf, looked up at "latest" so a bag replay works unchanged.
+  Bags recorded before `road_follower` published `~/route_path` fall back to
+  `/route_planner/route_path`.
+* **rviz Reset clears the OSM map for good.** Reset and a Fixed Frame change clear every
+  display without subscribing again, and `osm_cloud` publishes `/osm_grid` and
+  `/intersection_markers` once, latched. Untick and re-tick the *Map (osm_cloud)* group
+  instead: that subscribes again and the latched copies arrive within a few seconds.
 
 Useful arguments: `rviz:=false` (HUD only, e.g. rviz runs on a laptop), `hud:=false`,
 `description:=true` (publish the URDF here, for old bags), `robot_body:=true`
