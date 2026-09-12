@@ -165,6 +165,12 @@ class RoadFollower(Node):
         # latched PoseStamped in map_frame of the intersection that triggered GPS mode
         # (empty frame_id = none); the map_data viewer draws the enter/exit circles around it
         self.declare_parameter("active_intersection_topic", "~/active_intersection")
+        # The route actually being followed, whatever its source (a file or route_planner):
+        # latched nav_msgs/Path in map_frame (no poses = no route) and a latched String
+        # "file <path>" | "route_planner" | "". route_planner's own route_path only ever
+        # holds the last *planned* route, which is stale while a file is driven.
+        self.declare_parameter("route_path_topic", "~/route_path")
+        self.declare_parameter("route_source_topic", "~/route_source")
         # Trigger service that stops the current leg from any state (F7): commander STOP,
         # every pending timer cancelled, back to IDLE. Cheaper than the e-stop, which costs
         # 5 points in the competition.
@@ -478,6 +484,12 @@ class RoadFollower(Node):
         self._active_int_pub = self.create_publisher(
             PoseStamped, gp("active_intersection_topic"), latched
         )
+        self._route_path_pub = self.create_publisher(
+            Path, gp("route_path_topic"), latched
+        )
+        self._route_source_pub = self.create_publisher(
+            String, gp("route_source_topic"), latched
+        )
         self._abort_srv = self.create_service(
             Trigger, gp("abort_service"), self._abort_callback
         )
@@ -498,8 +510,11 @@ class RoadFollower(Node):
                 # Nothing else to drive: the route from the start (the reason is set with the
                 # rest of the runtime state below).
                 self.state = self.STATE_GPS
-        elif self.mode.route:
-            self.state = self.STATE_IDLE  # mission: wait for a goal to plan a route to
+        else:
+            # Replace whatever route an earlier follower left in rviz and the HUD.
+            self._publish_route()
+            if self.mode.route:
+                self.state = self.STATE_IDLE  # mission: wait for a goal to plan a route to
 
         if self._geo_goals:
             self._process_waypoints()  # lat/lon goals, no transform needed
@@ -737,7 +752,9 @@ class RoadFollower(Node):
         self._intersections_on_route = None  # filtered against the old route
         self.waypoints = []
         if self._tf_ready:
-            self._process_waypoints()
+            self._process_waypoints()  # publishes the placed route
+        else:
+            self._publish_route()  # not placed yet: at least clear the previous one
         self.get_logger().info(f"Route set: {len(self.route)} waypoints from {source}")
         self._publish_waypoints_markers()
 
@@ -746,6 +763,23 @@ class RoadFollower(Node):
         self.waypoints = [self.backend.waypoint_msg(pt) for pt in self.route.raw]
         self.route.place(self.frames, self.backend.to_src)
         self._intersections_on_route = None  # the route polyline moved
+        self._publish_route()
+
+    def _publish_route(self):
+        """Latch the followed route (placed waypoints only) and where it came from."""
+        path = Path()
+        path.header.frame_id = self.map_frame
+        path.header.stamp = self.get_clock().now().to_msg()
+        for xy in self.route.map_xy:
+            if xy is None:
+                continue
+            pose = PoseStamped()
+            pose.header = path.header
+            pose.pose.position.x, pose.pose.position.y = float(xy[0]), float(xy[1])
+            pose.pose.orientation.w = 1.0
+            path.poses.append(pose)
+        self._route_path_pub.publish(path)
+        self._route_source_pub.publish(String(data=self.route.source))
 
     def _waypoint_distance(self, idx, rob_xy):
         """Distance (m) from the robot to waypoint ``idx`` (inf if unknown)."""
@@ -764,9 +798,16 @@ class RoadFollower(Node):
         return float("inf")
 
     def _publish_waypoints_markers(self):
+        # DELETEALL first: markers have no lifetime, so without it rviz keeps the spheres of
+        # an earlier, longer route (another follower run, a previous leg) past this one's end.
+        clear = Marker()
+        clear.header.frame_id = self.map_frame
+        clear.ns = "gps_waypoints"
+        clear.action = Marker.DELETEALL
+        marker_array = MarkerArray(markers=[clear])
         if not self.waypoints_raw or not self._tf_ready or not self.waypoints_map:
+            self._marker_pub.publish(marker_array)
             return
-        marker_array = MarkerArray()
         now = self.get_clock().now().to_msg()
         for i, xy in enumerate(self.waypoints_map):
             if xy is None:

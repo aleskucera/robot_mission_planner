@@ -312,7 +312,7 @@ Visualization Manager:
           Length: 0.30000001192092896
           Line Style: Billboards
           Line Width: 0.4000000059604645
-          Name: Planned route (route_planner)
+          Name: Route being followed (road_follower)
           Offset:
             X: 0
             Y: 0
@@ -328,7 +328,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /route_planner/route_path
+            Value: /road_follower/route_path
           Value: true
         - Class: rviz_default_plugins/MarkerArray
           Enabled: true

@@ -2,8 +2,8 @@
 """Mission HUD: what an operator watches during a Robotour run, as rviz overlays.
 
 Collects the mission and robot topics into two rviz_2d_overlay_msgs/OverlayText
-panels drawn over the 3D view -- ``~/mission`` (follower state, route progress,
-commander, last event, planner, QR goal) top left and ``~/status`` (e-stop,
+panels drawn over the 3D view -- ``~/mission`` (follower state, route progress and
+source, commander, last event, planner, QR goal) top left and ``~/status`` (e-stop,
 control source ROS/RC, measured and commanded velocity, battery, motor temperatures,
 GNSS fix) top right -- plus ``~/robot_body``, a placeholder box marker for replays
 where nothing publishes /robot_description.
@@ -21,6 +21,7 @@ original stamps, which are nowhere near the node's wall clock.
 from __future__ import annotations
 
 import math
+import os
 
 import rclpy
 from geographic_msgs.msg import GeoPointStamped
@@ -88,7 +89,14 @@ class MissionHud(Node):
         follower_event = p("follower_event_topic", "/road_follower/event").value
         commander_state = p("commander_state_topic", "/crl_commander/state").value
         planner_status = p("planner_status_topic", "/route_planner/status").value
-        route_path = p("route_path_topic", "/route_planner/route_path").value
+        # The route being followed comes from road_follower, whatever its source. route_planner's
+        # route_path is only the fallback for bags recorded before the follower published one:
+        # it holds the last *planned* route, stale while a GPX/YAML file is driven.
+        route_path = p("route_path_topic", "/road_follower/route_path").value
+        route_source = p("route_source_topic", "/road_follower/route_source").value
+        planner_route_path = p(
+            "planner_route_path_topic", "/route_planner/route_path"
+        ).value
         qr_goal = p("qr_goal_topic", "/qr_goal/goal").value
         estop = p("estop_topic", "/estop_active").value
         battery = p("battery_topic", "/battery_state").value
@@ -136,6 +144,8 @@ class MissionHud(Node):
         self._commander = ""
         self._planner = ""
         self._route: Path | None = None
+        self._route_from_follower = False  # once true, the planner fallback is ignored
+        self._route_source: str | None = None
         self._goal: GeoPointStamped | None = None
         self._estop: bool | None = None
         self._battery: BatteryState | None = None
@@ -171,7 +181,14 @@ class MissionHud(Node):
         sub(
             planner_status, String, lambda m: setattr(self, "_planner", m.data), LATCHED
         )
-        sub(route_path, Path, lambda m: setattr(self, "_route", m), LATCHED)
+        sub(route_path, Path, self._route_cb, LATCHED)
+        sub(planner_route_path, Path, self._planner_route_cb, LATCHED)
+        sub(
+            route_source,
+            String,
+            lambda m: setattr(self, "_route_source", m.data),
+            LATCHED,
+        )
         sub(qr_goal, GeoPointStamped, lambda m: setattr(self, "_goal", m), LATCHED)
         sub(estop, Bool, lambda m: setattr(self, "_estop", m.data), PLAIN)
         sub(battery, BatteryState, lambda m: setattr(self, "_battery", m), PLAIN)
@@ -196,6 +213,14 @@ class MissionHud(Node):
     def _event_cb(self, msg: String) -> None:
         self._event = msg.data
         self._event_at = self.get_clock().now()
+
+    def _route_cb(self, msg: Path) -> None:
+        self._route = msg
+        self._route_from_follower = True
+
+    def _planner_route_cb(self, msg: Path) -> None:
+        if not self._route_from_follower:
+            self._route = msg
 
     def _temperature_cb(self, msg: Temperature) -> None:
         self._temps[msg.header.frame_id or "?"] = msg.temperature
@@ -291,6 +316,18 @@ class MissionHud(Node):
         lines = [self._row("FOLLOWER", state, color)]
 
         lines.append(self._row("route", self._route_progress()))
+        # Where the followed route came from. The planner and QR goal rows below keep the
+        # last planned mission, so they are greyed out while a file route is driven.
+        source = self._route_source
+        planned = True
+        if source is None:
+            source = "-"  # an old bag, or no follower yet
+        elif source.startswith("file"):
+            source = f"file {os.path.basename(source[4:].strip())}"
+            planned = False
+        elif not source:
+            source = "none"
+        lines.append(self._row("source", source))
 
         commander = self._commander or "-"
         lines.append(
@@ -306,16 +343,16 @@ class MissionHud(Node):
         lines.append(self._row("event", event))
 
         planner = self._planner or "-"
-        lines.append(
-            self._row(
-                "planner", planner, RED if planner.startswith("failed") else WHITE
-            )
-        )
+        if not planned:
+            color = GREY
+        else:
+            color = RED if planner.startswith("failed") else WHITE
+        lines.append(self._row("planner", planner, color))
 
         goal = "-"
         if self._goal is not None:
             goal = f"{self._goal.position.latitude:.7f}, {self._goal.position.longitude:.7f}"
-        lines.append(self._row("QR goal", goal))
+        lines.append(self._row("QR goal", goal, WHITE if planned else GREY))
         if self.hint:
             lines.append(self._row("hint", self.hint, GREY))
         return self._overlay(

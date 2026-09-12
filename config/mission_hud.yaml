@@ -11,7 +11,13 @@
     follower_event_topic: "/road_follower/event"
     commander_state_topic: "/crl_commander/state"
     planner_status_topic: "/route_planner/status"
-    route_path_topic: "/route_planner/route_path"
+    # The route being followed and its source ("file <path>" | "route_planner"), both from
+    # road_follower, so a GPX/YAML route shows up as well as a planned one.
+    route_path_topic: "/road_follower/route_path"
+    route_source_topic: "/road_follower/route_source"
+    # Used only until route_path_topic has sent anything: bags recorded before road_follower
+    # published its route. It holds the last planned route, stale while a file is driven.
+    planner_route_path_topic: "/route_planner/route_path"
     qr_goal_topic: "/qr_goal/goal"
     estop_topic: "/estop_active"
     battery_topic: "/battery_state"

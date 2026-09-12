@@ -37,6 +37,8 @@
     event_topic: "~/event"
     home_topic: "~/home" # latched GeoPointStamped: the service area
     active_intersection_topic: "~/active_intersection"
+    route_path_topic: "~/route_path" # latched Path: the route being followed (file or planned)
+    route_source_topic: "~/route_source" # latched String: "file <path>" | "route_planner" | ""
     abort_service: "~/abort" # std_srvs/Trigger: stop the leg, go IDLE
     switch_mode_service: "/crl_commander/switch_mode"
     configure_sequence_service: "/crl_commander/configure_sequence_mode"
