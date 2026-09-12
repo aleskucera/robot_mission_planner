@@ -37,8 +37,13 @@
 
     # Panel look. Sizes are in pixels of the 3D render panel.
     text_size: 12.0
+    # Mission panel (top left) and status panel (top right). Together with the two margins
+    # they must fit the 3D view (~1220 px in the operator layout), or the panels overlap and
+    # rviz draws either one on top. ~9.6 px per character at text_size 12.
     panel_width: 620
     panel_max_chars: 60 # lines are truncated rather than wrapped
+    status_panel_width: 470
+    status_panel_max_chars: 46 # longest status row: "control   RC CONTROLLER   (/cmd_vel ignored)"
     panel_margin: 8
     panel_bg_alpha: 0.55
     font: "DejaVu Sans Mono"

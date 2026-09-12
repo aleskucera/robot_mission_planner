@@ -114,10 +114,16 @@ class MissionHud(Node):
 
         # ---- panel look. Sizes are in pixels of the 3D render panel.
         self.text_size = float(p("text_size", 12.0).value)
+        # Both panels share the width of the 3D view: panel_width + status_panel_width +
+        # 2 * panel_margin must stay below it, or the panels overlap. The overlay plugin gives
+        # its overlays no z-order, so which one is drawn on top is arbitrary. The status rows
+        # are short, so that panel is narrower (the operator view is ~1220 px wide).
         self.panel_width = int(p("panel_width", 620).value)
+        self.status_panel_width = int(p("status_panel_width", 470).value)
         # Lines are truncated rather than wrapped: a wrapped line would spill out of the
-        # box, which is sized from the line count.
+        # box, which is sized from the line count. ~9.6 px per character at text_size 12.
         self.max_chars = int(p("panel_max_chars", 60).value)
+        self.status_max_chars = int(p("status_panel_max_chars", 46).value)
         self.margin = int(p("panel_margin", 8).value)
         self.bg_alpha = float(p("panel_bg_alpha", 0.55).value)
         self.font = p("font", "DejaVu Sans Mono").value
@@ -244,8 +250,10 @@ class MissionHud(Node):
     def _color(self, text: str, color: str) -> str:
         return f'<span style="color:{color};">{text}</span>' if self.markup else text
 
-    def _row(self, label: str, value: str, color: str = WHITE) -> str:
-        room = max(self.max_chars - 10, 8)
+    def _row(
+        self, label: str, value: str, color: str = WHITE, max_chars: int | None = None
+    ) -> str:
+        room = max((max_chars or self.max_chars) - 10, 8)
         if len(value) > room:
             value = value[: room - 1] + "\u2026"
         return f"{self._color(f'{label:<10}', GREY)}{self._color(value, color)}"
@@ -256,14 +264,17 @@ class MissionHud(Node):
             return None
         return (self.get_clock().now() - at).nanoseconds / 1e9
 
-    def _twist_row(self, label: str, twist: Twist | None, at) -> str:
+    def _twist_row(self, label: str, twist: Twist | None, at, max_chars: int) -> str:
         age = self._age(at)
         if twist is None or age is None:
-            return self._row(label, "-", GREY)
+            return self._row(label, "-", GREY, max_chars)
         if age > self.stale_timeout:
-            return self._row(label, f"-   (silent {age:.0f} s)", GREY)
+            return self._row(label, f"-   (silent {age:.0f} s)", GREY, max_chars)
         return self._row(
-            label, f"{twist.linear.x:+.2f} m/s   {twist.angular.z:+.2f} rad/s"
+            label,
+            f"{twist.linear.x:+.2f} m/s   {twist.angular.z:+.2f} rad/s",
+            WHITE,
+            max_chars,
         )
 
     def _robot_xy(self, frame: str) -> tuple[float, float] | None:
@@ -291,10 +302,12 @@ class MissionHud(Node):
         )
         return f"{i + 1}/{len(pts)} wp   {left:.0f} m left of {total:.0f} m"
 
-    def _overlay(self, lines: list[str], right: bool, bg: ColorRGBA) -> OverlayText:
+    def _overlay(
+        self, lines: list[str], right: bool, bg: ColorRGBA, width: int
+    ) -> OverlayText:
         msg = OverlayText()
         msg.action = OverlayText.ADD
-        msg.width = self.panel_width
+        msg.width = width
         # Grow the box with the content instead of leaving a large empty rectangle.
         msg.height = int(round(len(lines) * self.text_size * 1.6 + 14))
         msg.horizontal_alignment = OverlayText.RIGHT if right else OverlayText.LEFT
@@ -356,17 +369,25 @@ class MissionHud(Node):
         if self.hint:
             lines.append(self._row("hint", self.hint, GREY))
         return self._overlay(
-            lines, right=False, bg=rgba(0.06, 0.06, 0.08, self.bg_alpha)
+            lines,
+            right=False,
+            bg=rgba(0.06, 0.06, 0.08, self.bg_alpha),
+            width=self.panel_width,
         )
 
     def _status_panel(self) -> OverlayText:
+        chars = self.status_max_chars
+
+        def row(label: str, value: str, color: str = WHITE) -> str:
+            return self._row(label, value, color, chars)
+
         if self._estop is None:
             estop, estop_color = "unknown", GREY
         elif self._estop:
             estop, estop_color = "PRESSED", RED
         else:
             estop, estop_color = "released", GREEN
-        lines = [self._row("E-STOP", estop, estop_color)]
+        lines = [row("E-STOP", estop, estop_color)]
 
         control, color = "unknown (no /joy)", GREY
         age = self._age(self._joy_at)
@@ -379,9 +400,9 @@ class MissionHud(Node):
                 control, color = "RC CONTROLLER   (/cmd_vel ignored)", AMBER
             else:
                 control, color = "ROS   (/cmd_vel)", GREEN
-        lines.append(self._row("control", control, color))
-        lines.append(self._twist_row("velocity", self._odom, self._odom_at))
-        lines.append(self._twist_row("cmd_vel", self._cmd, self._cmd_at))
+        lines.append(row("control", control, color))
+        lines.append(self._twist_row("velocity", self._odom, self._odom_at, chars))
+        lines.append(self._twist_row("cmd_vel", self._cmd, self._cmd_at, chars))
 
         battery = "-"
         color = WHITE
@@ -391,7 +412,7 @@ class MissionHud(Node):
             pct = b.percentage * (1.0 if b.percentage > 1.5 else 100.0)
             color = RED if pct < 15 else AMBER if pct < 30 else GREEN
             battery = f"{pct:.0f} %   {b.voltage:.1f} V   {b.current:+.1f} A"
-        lines.append(self._row("battery", battery, color))
+        lines.append(row("battery", battery, color))
 
         temps = "-"
         color = WHITE
@@ -399,7 +420,7 @@ class MissionHud(Node):
             name, value = max(self._temps.items(), key=lambda kv: kv[1])
             color = RED if value > 80 else AMBER if value > 65 else WHITE
             temps = f"{value:.0f} C  {name}   (max of {len(self._temps)})"
-        lines.append(self._row("temps", temps, color))
+        lines.append(row("temps", temps, color))
 
         gnss, fix, color = "-", "-", WHITE
         if self._fix is not None:
@@ -408,8 +429,8 @@ class MissionHud(Node):
             if f.position_covariance_type != NavSatFix.COVARIANCE_TYPE_UNKNOWN:
                 fix += f"   +/-{math.sqrt(max(f.position_covariance[0], 0.0)):.2f} m"
             gnss = f"{f.latitude:.7f}, {f.longitude:.7f}"
-        lines.append(self._row("GNSS", gnss))
-        lines.append(self._row("fix", fix, color))
+        lines.append(row("GNSS", gnss))
+        lines.append(row("fix", fix, color))
 
         # The whole panel goes dark red while the e-stop is in, so it reads across the room.
         bg = (
@@ -417,7 +438,7 @@ class MissionHud(Node):
             if self._estop
             else rgba(0.06, 0.06, 0.08, self.bg_alpha)
         )
-        return self._overlay(lines, right=True, bg=bg)
+        return self._overlay(lines, right=True, bg=bg, width=self.status_panel_width)
 
     def _tick(self) -> None:
         self.pub_mission.publish(self._mission_panel())
