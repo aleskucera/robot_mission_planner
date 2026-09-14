@@ -229,7 +229,11 @@ ros2 launch robot_mission_planner mission_signal.launch
 
 The event → text/sound table is in `config/mission_signal.yaml` (`speech:` for the `speak`
 backend, `sounds:` for `aplay`, keyed by the event name before the first `:`); an event that
-is not listed is only logged and a missing wav degrades to one warning. `_signal_gpio()` in
+is not listed is only logged and a missing wav degrades to one warning. `speech_level:` picks
+the speak topic per event — `info` → `/speak/info`, `warn` → `/speak/warn`, `error` →
+`/speak/err` (`speak_info_topic`, `speak_warn_topic`, `speak_error_topic`), which `speak.py`
+plays at rising volume; by default `ABORT` is `warn`, `PLAN_FAILED` is `error` and the rest
+`info`. `_signal_gpio()` in
 `mission_signal.py` is the hook for the light/GPIO backend. The event topic is latched and
 `std_msgs/String` carries no stamp, so the first message received within `ignore_latched_s`
 (1 s) of the node start is dropped as the previous run's latched event — a genuinely new

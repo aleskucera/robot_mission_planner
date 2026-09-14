@@ -11,9 +11,12 @@ before the first ``:``) to an action from a table in ``config/mission_signal.yam
 
 Backends (``backend``)
 ----------------------
-speak : (default) publish the sentence on ``speak_topic`` (``/speak/info`` | ``/speak/warn``
-        | ``/speak/err``) for ``helhest_bringup``'s ``nodes/speak.py`` -> sound_play. Needs
-        the NUC's ``sound.launch``; with nothing subscribed the events are still logged.
+speak : (default) publish the sentence for ``helhest_bringup``'s ``nodes/speak.py`` ->
+        sound_play, on the topic of the event's level (``speech_level.<EVENT>``: ``info`` ->
+        ``speak_info_topic``, ``warn`` -> ``speak_warn_topic``, ``error`` ->
+        ``speak_error_topic``; unlisted events are ``info``). speak.py plays the levels at
+        rising volume. Needs the NUC's ``sound.launch``; with nothing subscribed the events
+        are still logged.
 aplay : play a wav with ``aplay`` in a child process, so the node never blocks on audio.
         Table entries are absolute paths or file names under ``sound_dir``; a missing file
         is warned about once and then ignored, rather than taking the node with it.
@@ -69,6 +72,15 @@ DEFAULT_SPEECH = {
     "IDLE": "Waiting for a goal",
 }
 
+# Which speak.py topic an event is said on; speak.py sets the volume by it (info 0.6, warn 0.8,
+# error 1.0). An event not listed here is said at info.
+DEFAULT_SPEECH_LEVELS = {
+    "ABORT": "warn",
+    "PLAN_FAILED": "error",
+}
+
+SPEECH_LEVELS = ("info", "warn", "error")
+
 BACKENDS = ("speak", "aplay", "log", "gpio")
 
 
@@ -85,8 +97,13 @@ class MissionSignal(Node):
         self.backend = str(
             self._param("backend", "speak")
         )  # speak | aplay | log | gpio
-        # speak backend: helhest_bringup nodes/speak.py listens here (sensor_data QoS).
-        speak_topic = str(self._param("speak_topic", "/speak/info"))
+        # speak backend: helhest_bringup nodes/speak.py listens on one topic per level
+        # (sensor_data QoS); "" switches a level off, its events are then only logged.
+        speak_topics = {
+            "info": str(self._param("speak_info_topic", "/speak/info")),
+            "warn": str(self._param("speak_warn_topic", "/speak/warn")),
+            "error": str(self._param("speak_error_topic", "/speak/err")),
+        }
         # Command the aplay backend runs; the resolved file path is appended to it.
         self.player_command = str(self._param("player_command", "aplay -q"))
         # Where relative sound files are looked for (empty = the package data/ directory).
@@ -104,11 +121,26 @@ class MissionSignal(Node):
         self.table = dict(DEFAULT_SOUNDS if self.backend == "aplay" else DEFAULT_SPEECH)
         for name, param in self.get_parameters_by_prefix(prefix).items():
             self.table[name.upper()] = "" if param.value is None else str(param.value)
+        self.levels = dict(DEFAULT_SPEECH_LEVELS)
+        for name, param in self.get_parameters_by_prefix("speech_level").items():
+            level = str(param.value).strip().lower()
+            level = "error" if level == "err" else level  # the topic's own spelling
+            if level not in SPEECH_LEVELS:
+                self.get_logger().error(
+                    f"speech_level.{name}: unknown level '{param.value}' "
+                    f"(expected one of {SPEECH_LEVELS}), using 'info'"
+                )
+                level = "info"
+            self.levels[name.upper()] = level
 
-        self._speak_pub = (
-            self.create_publisher(String, speak_topic, qos_profile_sensor_data)
+        self._speak_pubs = (
+            {
+                level: self.create_publisher(String, topic, qos_profile_sensor_data)
+                for level, topic in speak_topics.items()
+                if topic
+            }
             if self.backend == "speak"
-            else None
+            else {}
         )
 
         self._warned: set[str] = set()  # files / commands already complained about
@@ -122,12 +154,17 @@ class MissionSignal(Node):
         self.get_logger().info(
             f"mission_signal ready: {event_topic} -> {self.backend} backend"
             + (
-                f" on {speak_topic}"
+                " on " + ", ".join(f"{lvl}={t}" for lvl, t in speak_topics.items() if t)
                 if self.backend == "speak"
                 else f", sounds in {self.sound_dir}"
             )
             + ", table: "
-            + ", ".join(f"{k}={v}" for k, v in sorted(self.table.items()) if v)
+            + ", ".join(
+                f"{k}={v}"
+                + (f" [{self.levels.get(k, 'info')}]" if self.backend == "speak" else "")
+                for k, v in sorted(self.table.items())
+                if v
+            )
         )
 
     # ------------------------------------------------------------------ helpers
@@ -181,7 +218,15 @@ class MissionSignal(Node):
     # ------------------------------------------------------------------ backends
     def _signal_speak(self, event: str, action: str) -> None:
         """Hand the sentence to helhest_bringup's speak.py (which talks to sound_play)."""
-        self._speak_pub.publish(String(data=action))
+        level = self.levels.get(event, "info")
+        pub = self._speak_pubs.get(level)
+        if pub is None:
+            self._warn_once(
+                f"speak:{level}",
+                f"The {level} speech topic is off: {level} events are only logged",
+            )
+            return
+        pub.publish(String(data=action))
 
     def _signal_aplay(self, event: str, action: str) -> None:
         """Play a wav in a child process; nothing here may block or raise."""
