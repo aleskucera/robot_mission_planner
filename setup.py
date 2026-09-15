@@ -55,6 +55,7 @@ setup(
             # start it in a mode directly, under the names the old separate nodes had.
             "road_follower = robot_mission_planner.road_follower:main",
             "gps_follower = robot_mission_planner.road_follower:main_gps",
+            "gps_shift_follower = robot_mission_planner.road_follower:main_gps_shift",
             "road_follower_simple = robot_mission_planner.road_follower:main_road",
             "qr_goal = robot_mission_planner.qr_goal:main",
             "mission_hud = robot_mission_planner.mission_hud:main",

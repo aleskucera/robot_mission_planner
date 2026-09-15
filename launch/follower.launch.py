@@ -8,6 +8,7 @@ Modes:
   road_gps: follow road, fallback to route at intersections/errors/final approach (default)
   gps: follow route waypoints only
   road: follow road only (no route/intersections/goal)
+  gps_shift: route waypoints one at a time, moved onto the segmented road (road_map_2)
 
 Route comes from `gps_file` (GPX/YAML) or QR goal via `route_planner`.
 Configuration: `config/follower.yaml` + `config/modes/<mode>.yaml` + launch arguments.
@@ -59,7 +60,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "mode", default_value="road_gps", description="road_gps | gps | road"
+                "mode",
+                default_value="road_gps",
+                description="road_gps | gps | road | gps_shift",
             ),
             DeclareLaunchArgument(
                 "config", default_value=os.path.join(share, "config", "follower.yaml")

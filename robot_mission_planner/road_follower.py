@@ -9,6 +9,9 @@ road_gps : follow the detected road, handing over to the route's waypoints aroun
            being stuck, and for the final metres to the goal. The Robotour mode.
 gps      : follow the route's waypoints from beginning to end, never look at the road.
 road     : follow the road only -- no route, no intersections, no goal to arrive at.
+gps_shift: follow the route's waypoints one at a time as goto goals, each moved by the offset
+           between the route and the road centre in ``road_map_topic`` around the robot
+           (``follower/route_shift.py``); pure GPS near OSM intersections.
 
 The route of the two route modes is either a GPX/YAML file (``file``) or planned by
 route_planner from a mission goal (a QR code); that is a separate choice, not a mode.
@@ -51,12 +54,13 @@ import numpy as np
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from geographic_msgs.msg import GeoPointStamped
-from geometry_msgs.msg import PoseArray, PoseStamped
+from geometry_msgs.msg import Point, PoseArray, PoseStamped
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
-from sensor_msgs.msg import NavSatFix
+from ros2_numpy import numpify
+from sensor_msgs.msg import NavSatFix, PointCloud2
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
@@ -83,6 +87,7 @@ from robot_mission_planner.follower.road_goal import (
     smooth,
 )
 from robot_mission_planner.follower.route import Route, load_waypoints, resolve_file
+from robot_mission_planner.follower.route_shift import centre_points, fit_route_shift
 
 GPS_REASON_INTERSECTION = "intersection"
 GPS_REASON_NO_ROAD = "no_road"
@@ -224,6 +229,20 @@ class RoadFollower(Node):
         self.declare_parameter("route_stretch_max_turn", 45.0)
         self.declare_parameter("route_projection_window", 10)
         self.declare_parameter("route_goal_without_carrot", False)
+        # --- Route shift (mode gps_shift) ---
+        # Waypoints moved by the offset between the route and the road centre in build_map's
+        # road map within shift_radius of the robot (translation only, see route_shift.py).
+        self.declare_parameter("road_map_topic", "/road_map_2")
+        # Centerline cost image / 255 (0 = road centre). Not rgb: build_map's centre window is
+        # grey 0..22, whose rgb packing reads 0 for every point in the 2026-09-14 bags.
+        self.declare_parameter("road_map_cost_field", "cost")
+        self.declare_parameter("shift_radius", 2.5)  # m around the robot
+        # Cost <= this is the road centre (22/255: build_map's centerline_value_max)
+        self.declare_parameter("shift_centre_cost_max", 0.086)
+        self.declare_parameter("shift_min_points", 15)  # fewer centre cells: no fit
+        self.declare_parameter("shift_max", 3.0)  # m: longer shifts are clamped
+        self.declare_parameter("shift_smoothing", 0.8)  # 0 = raw, 0.8 = damped
+        self.declare_parameter("shift_points_topic", "~/shift_centre_points")
         # Failure handling
         self.declare_parameter(
             "road_path_timeout", 5.0
@@ -350,6 +369,12 @@ class RoadFollower(Node):
         self.route_stretch_max_turn = math.radians(float(gp("route_stretch_max_turn")))
         self.route_projection_window = int(gp("route_projection_window"))
         self.route_goal_without_carrot = bool(gp("route_goal_without_carrot"))
+        self.road_map_cost_field = str(gp("road_map_cost_field"))
+        self.shift_radius = float(gp("shift_radius"))
+        self.shift_centre_cost_max = float(gp("shift_centre_cost_max"))
+        self.shift_min_points = int(gp("shift_min_points"))
+        self.shift_max = float(gp("shift_max"))
+        self.shift_smoothing = float(gp("shift_smoothing"))
         self.road_path_timeout = gp("road_path_timeout")
         self.stuck_fallback_to_gps = gp("stuck_fallback_to_gps")
         self.service_timeout = gp("service_timeout")
@@ -450,6 +475,11 @@ class RoadFollower(Node):
         self._route_source_pub = self.create_publisher(
             String, gp("route_source_topic"), latched
         )
+        self._shift_points_pub = (
+            self.create_publisher(Marker, gp("shift_points_topic"), 10)
+            if self.mode.shift
+            else None
+        )
         self._abort_srv = self.create_service(
             Trigger, gp("abort_service"), self._abort_callback
         )
@@ -492,6 +522,8 @@ class RoadFollower(Node):
         self._intersections_on_route = None  # the subset of them on the planned route
         self._goal_active = False
         self._last_road_goal = None  # (x, y) in map_frame of the active ROAD goal
+        self._shift = None  # gps_shift: smoothed (dx, dy) route -> road centre, map_frame
+        self._shift_blocked = False  # gps_shift: near an intersection, pure GPS
         self._pending_goal_timer = None
         self._gps_start_index = 0
         self.route.synced = False  # first sync searches the whole list
@@ -529,12 +561,16 @@ class RoadFollower(Node):
                 self.create_subscription(
                     carrot_msg, gp("carrot_topic"), self._carrot_callback, 10
                 )
-        if self.mode.switching:
+        if self.mode.switching or self.mode.shift:
             self.create_subscription(
                 PoseArray,
                 gp("intersections_topic"),
                 self._intersections_callback,
                 latched,
+            )
+        if self.mode.shift:
+            self.create_subscription(
+                PointCloud2, gp("road_map_topic"), self._road_map_callback, 10
             )
         if gp("gps_fix_topic"):
             self.create_subscription(
@@ -711,6 +747,7 @@ class RoadFollower(Node):
         self._gps_entry_index = 0
         self._gps_route_dir = None
         self._last_road_goal = None
+        self._shift = None  # measured against the old route
         self._intersections_on_route = None  # filtered against the old route
         self.waypoints = []
         if self._tf_ready:
@@ -1075,7 +1112,11 @@ class RoadFollower(Node):
             return
         # Some backends report the waypoint index and the distance to the goal through action
         # feedback (nav2); with the others the follower keeps track itself.
-        if self.state == self.STATE_ROAD or not self.backend.reports_progress:
+        if (
+            self.state == self.STATE_ROAD
+            or not self.backend.reports_progress
+            or self.mode.shift  # goto goals: no sequence feedback from any backend
+        ):
             self._sync_waypoint_index_to_closest(rob_xy)
         if not self.backend.reports_progress and self.state == self.STATE_ROAD:
             self._check_road_goal_reached(rob_xy)
@@ -1088,10 +1129,11 @@ class RoadFollower(Node):
         elif (
             not self.mode.switching
             and self.state == self.STATE_GPS
-            and not self._goal_active
+            and (self.mode.shift or not self._goal_active)
         ):
-            # Nothing hands over to this state and back in the route-only mode, so the tick
-            # is what starts the first sequence and picks it up again after a backend stop.
+            # Nothing hands over to this state and back in the route-only modes, so the tick
+            # is what starts the first sequence and picks it up again after a backend stop;
+            # gps_shift re-places its single goal every tick.
             self._send_gps_goal()
         elif self.backend.left_us(self._goal_active):
             if self.state == self.STATE_GPS:
@@ -1775,8 +1817,150 @@ class RoadFollower(Node):
         lateral = f"{proj[1]:+.1f}" if proj is not None else "?"
         return f" ({ahead:.1f} m ahead, {lateral} m off the route)"
 
+    def _road_map_callback(self, msg):
+        """
+        gps_shift: fit the route shift on build_map's road map. Nothing is measured near an
+        intersection (the junction's other road would pull the fit sideways). No fit counts as
+        a zero measurement, so a shift that loses its road fades out instead of sticking.
+        """
+        if (
+            self.state != self.STATE_GPS
+            or self._shift_blocked
+            or len(self.route.polyline) < 2
+        ):
+            return
+        pose = self._robot_pose()
+        if pose is None:
+            return
+        cloud = numpify(msg).ravel()
+        if cloud.size == 0 or self.road_map_cost_field not in cloud.dtype.names:
+            return
+        xy = np.column_stack([cloud["x"], cloud["y"]]).astype(float)
+        frame = msg.header.frame_id
+        if frame and frame != self.map_frame:
+            m = self.frames.matrix(self.map_frame, frame, timeout=0.2)
+            if m is None:
+                return
+            xy = xy @ m[:2, :2].T + m[:2, 3]
+        centre = centre_points(
+            xy,
+            cloud[self.road_map_cost_field],
+            pose[:2],
+            self.shift_radius,
+            self.shift_centre_cost_max,
+        )
+        fit = fit_route_shift(
+            centre,
+            self.route.polyline,
+            pose[:2],
+            self.shift_radius,
+            self.shift_max,
+            self.shift_min_points,
+        )
+        self._shift = smooth(
+            self._shift or (0.0, 0.0), fit or (0.0, 0.0), self.shift_smoothing
+        )
+        self.get_logger().info(
+            f"Route shift ({self._shift[0]:+.2f}, {self._shift[1]:+.2f}) m; fit "
+            + (f"({fit[0]:+.2f}, {fit[1]:+.2f})" if fit else "none")
+            + f" from {len(centre)} centre cells",
+            throttle_duration_sec=2.0,
+        )
+        marker = Marker()
+        marker.header.frame_id = self.map_frame
+        marker.header.stamp = msg.header.stamp
+        marker.ns = "shift_centre_points"
+        marker.type = Marker.POINTS
+        marker.scale.x = marker.scale.y = 0.1
+        marker.color.g = marker.color.a = 1.0
+        marker.pose.orientation.w = 1.0
+        for x, y in centre:
+            marker.points.append(Point(x=float(x), y=float(y), z=0.0))
+        self._shift_points_pub.publish(marker)
+
+    def _update_shift_block(self, rob_xy):
+        """
+        gps_shift: within ``intersection_enter_threshold`` of an intersection on the route the
+        waypoints go out unshifted; farther than ``intersection_exit_threshold`` from every
+        intersection the shift is measured again, from zero.
+        """
+        closest, closest_xy = self._closest_intersection(rob_xy)
+        if not self._shift_blocked and closest < self.enter_threshold:
+            self.get_logger().info(
+                f"Intersection {closest:.1f} m away: pure GPS, route shift reset."
+            )
+            self._shift_blocked, self._shift = True, None
+            self._active_intersection = closest_xy
+            self._gps_reason = GPS_REASON_INTERSECTION
+        elif self._shift_blocked and closest > self.exit_threshold:
+            self.get_logger().info(
+                f"Intersection left ({closest:.1f} m): measuring the route shift again."
+            )
+            self._shift_blocked, self._shift = False, None
+            self._active_intersection = None
+            self._gps_reason = GPS_REASON_ROUTE
+
+    def _send_shift_goal(self):
+        """
+        gps_shift: drive to the first route waypoint at least ``road_goal_min_ahead`` away
+        (nearer ones are inside the commander's arrival box), moved by the route shift. One
+        waypoint at a time as a goto, so each takes the shift measured when its turn comes;
+        re-sent when the shifted goal moves more than ``road_goal_update_distance`` or the
+        commander dropped it.
+        """
+        pose = self._robot_pose()
+        if pose is None:
+            return
+        rob_xy = pose[:2]
+        self._update_shift_block(rob_xy)
+        wps = self.waypoints_map
+        placed = [
+            i for i in range(self.current_waypoint_index, len(wps)) if wps[i] is not None
+        ]
+        if not placed:
+            return
+        idx = next(
+            (
+                i
+                for i in placed
+                if self.route.distance_to(i, rob_xy) >= self.road_goal_min_ahead
+            ),
+            placed[-1],
+        )
+        dx, dy = self._shift or (0.0, 0.0)
+        goal = (wps[idx][0] + dx, wps[idx][1] + dy)
+        if (
+            idx == placed[-1]
+            and math.hypot(goal[0] - rob_xy[0], goal[1] - rob_xy[1])
+            < self.road_goal_reached_distance
+        ):
+            self._goal_active = False  # at the end of the route: nothing left to send
+            return
+        if not (
+            self._road_goal_needs_update(goal)
+            or self.backend.left_us(self._goal_active)
+        ):
+            return
+        direction = self.route.direction_at(max(idx - 1, 0))
+        yaw = (
+            math.atan2(direction[1], direction[0])
+            if direction is not None
+            else pose[2]
+        )
+        self.get_logger().info(
+            f"Shifted GPS goal: waypoint {idx} + ({dx:+.2f}, {dy:+.2f}) m = "
+            f"({goal[0]:.2f}, {goal[1]:.2f}) in {self.map_frame}",
+            throttle_duration_sec=2.0,
+        )
+        self._goal_active = True
+        self._last_road_goal = goal
+        self.backend.send_pose(goal[0], goal[1], yaw)
+
     def _send_gps_goal(self):
         if self.state != self.STATE_GPS or not self.waypoints:
+            return
+        if self.mode.shift:
+            self._send_shift_goal()
             return
         pose = self._robot_pose()
         if pose is not None:
@@ -1848,6 +2032,11 @@ def main_road():
 def main_gps():
     """``ros2 run robot_mission_planner gps_follower``: the follower in mode gps."""
     main("gps")
+
+
+def main_gps_shift():
+    """``ros2 run robot_mission_planner gps_shift_follower``: the follower in mode gps_shift."""
+    main("gps_shift")
 
 
 if __name__ == "__main__":

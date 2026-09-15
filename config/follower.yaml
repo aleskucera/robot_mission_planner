@@ -6,6 +6,7 @@
     #   road_gps: follow road, use route at intersections/fallback/final approach
     #   gps: follow route waypoints only
     #   road: follow road only (no route/goal)
+    #   gps_shift: route waypoints one at a time, moved onto the segmented road
     mode: "road_gps"
 
     # Navigation backend: "commander", "nav2", or "follow_path" (road mode only)
@@ -86,6 +87,17 @@
     route_projection_window: 10 # waypoints searched around the current index (0 = all)
     # true = drive blindly along route offset when no carrot arrives
     route_goal_without_carrot: false
+
+    # Route shift (mode gps_shift): each waypoint moved by the offset between the route and the
+    # road centre build_map sees around the robot (translation only); unshifted at intersections
+    road_map_topic: "/road_map_2" # build_map's road map in map_frame
+    road_map_cost_field: "cost" # centerline cost / 255, 0 = road centre (rgb reads 0 there)
+    shift_radius: 2.5 # m around the robot
+    shift_centre_cost_max: 0.086 # cost <= this is the centre (22/255, build_map centerline_value_max)
+    shift_min_points: 15 # fewer centre cells = no measurement (the shift fades out)
+    shift_max: 3.0 # m: longer shifts are clamped
+    shift_smoothing: 0.8 # 0 = raw, 0.8 = damped
+    shift_points_topic: "~/shift_centre_points" # Marker: the centre cells of the last fit
 
     # Mission (QR goal -> plan -> wait -> follow -> arrive -> idle)
     qr_goal_topic: "/qr_goal/goal" # GeoPointStamped from qr_goal

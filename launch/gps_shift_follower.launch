@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Follower in gps_shift mode: route waypoints moved onto the segmented road. GPX/YAML file or QR goal. -->
+  <arg name="gps_file" default="" />
+  <arg name="nav_backend" default="" />
+
+  <include file="$(find-pkg-share robot_mission_planner)/launch/follower.launch.py">
+    <arg name="mode" value="gps_shift" />
+    <arg name="gps_file" value="$(var gps_file)" />
+    <arg name="nav_backend" value="$(var nav_backend)" />
+  </include>
+</launch>

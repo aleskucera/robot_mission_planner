@@ -7,6 +7,8 @@ backend, the mission layer. A mode only says *which* of those take part:
               intersections, on road-detection loss, on STUCK and for the final approach.
 ``gps``       the route's waypoints from beginning to end; the road is never looked at.
 ``road``      the road and nothing else: no route, no intersections, no goal.
+``gps_shift`` the route's waypoints, each moved by the offset between the route and the road
+              centre segmented around the robot; pure GPS around OSM intersections.
 
 The route of the two route modes comes from a file (``file:`` a GPX or YAML) or from a
 mission goal (a QR code -> ``PlanRoute``); that is a separate choice, not a mode.
@@ -22,6 +24,7 @@ class Mode:
     route: bool  # a route of waypoints is loaded and followed
     switching: bool  # ROAD <-> GPS hand-over during the run
     description: str
+    shift: bool = False  # route waypoints moved onto the road seen in road_map_2
 
     @property
     def mission(self) -> bool:
@@ -51,7 +54,17 @@ ROAD = Mode(
     description="road following only, no route and no goal",
 )
 
-MODES = {m.name: m for m in (ROAD_GPS, GPS, ROAD)}
+GPS_SHIFT = Mode(
+    "gps_shift",
+    road=False,
+    route=True,
+    switching=False,
+    description="the route's waypoints one at a time, moved onto the segmented road "
+    "(pure GPS at intersections)",
+    shift=True,
+)
+
+MODES = {m.name: m for m in (ROAD_GPS, GPS, ROAD, GPS_SHIFT)}
 NAMES = tuple(MODES)
 
 
