@@ -6,8 +6,9 @@ Panels:
       Expanded:
         - /Mission1
         - /Perception1
+        - /HUD panels1/HUD status (top right)1
       Splitter Ratio: 0.6000000238418579
-    Tree Height: 416
+    Tree Height: 669
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -366,17 +367,17 @@ Visualization Manager:
             Value: /crl_commander/plan
           Value: true
         - Class: rviz_default_plugins/MarkerArray
-          Enabled: false
+          Enabled: true
           Name: Route waypoints (road_follower)
           Namespaces:
-            {}
+            gps_waypoints: true
           Topic:
             Depth: 5
             Durability Policy: Volatile
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /gps_waypoints_markers
-          Value: false
+          Value: true
         - Alpha: 1
           Axes Length: 1
           Axes Radius: 0.10000000149011612
@@ -517,8 +518,8 @@ Visualization Manager:
         - Alpha: 0.800000011920929
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
-            Max Value: -9.831406593322754
-            Min Value: -10.19958782196045
+            Max Value: 10
+            Min Value: -10
             Value: true
           Axis: Z
           Channel Name: intensity
@@ -697,7 +698,7 @@ Visualization Manager:
           Name: HUD status (top right)
           Overtake BG Color Properties: false
           Overtake FG Color Properties: false
-          Overtake Position Properties: false
+          Overtake Position Properties: true
           Topic:
             Depth: 1
             Durability Policy: Volatile
@@ -706,14 +707,14 @@ Visualization Manager:
             Value: /mission_hud/status
           Value: true
           font: DejaVu Sans Mono
-          height: 128
+          height: 168
           hor_alignment: left
           hor_dist: 0
           line width: 2
           text size: 12
           ver_alignment: top
-          ver_dist: 0
-          width: 128
+          ver_dist: 599
+          width: 700
       Enabled: true
       Name: HUD panels
     - Class: rviz_default_plugins/Image
@@ -728,7 +729,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /odin1/image/compressed
+        Value: /odin1/image
       Value: true
     - Class: rviz_default_plugins/Image
       Enabled: true
@@ -749,7 +750,7 @@ Visualization Manager:
       Angular Color: 204; 204; 51
       Arrow Width: 4
       Class: rviz_default_plugins/TwistStamped
-      Enabled: false
+      Enabled: true
       Hide Small Values: true
       History Length: 1
       Linear Arrow Scale: 20
@@ -762,7 +763,60 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /cmd_vel
-      Value: false
+      Value: true
+    - Alpha: 1
+      Axes Length: 1
+      Axes Radius: 0.10000000149011612
+      Class: rviz_default_plugins/Pose
+      Color: 255; 25; 0
+      Enabled: true
+      Head Length: 0.30000001192092896
+      Head Radius: 0.10000000149011612
+      Name: Pose
+      Shaft Length: 1
+      Shaft Radius: 0.05000000074505806
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lookahead_pose
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: cost
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 8.5
+      Min Color: 0; 0; 0
+      Min Intensity: 0.024028370156884193
+      Name: Map
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.10000000149011612
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Use Fixed Frame: true
+      Use rainbow: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 180; 180; 180
@@ -788,7 +842,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: 1.1599982976913452
+      Angle: -4.294999599456787
       Class: rviz_default_plugins/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -798,11 +852,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 28.059837341308594
+      Scale: 10.030594825744629
       Target Frame: base_link
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 0
-      Y: 0
+      X: 0.8333783149719238
+      Y: 1.924513339996338
     Saved:
       - Class: rviz_default_plugins/Orbit
         Distance: 80
@@ -847,16 +901,16 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1163
+  Height: 849
   Hide Left Dock: false
   Hide Right Dock: false
   Odin camera:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd00000001000000000000015600000435fc0200000005fc0000003b000001f6000000e20100001afa000000000100000002fb000000100044006900730070006c0061007900730100000000000001560000015600fffffffb0000000a005600690065007700730100000000ffffffff0000010000fffffffb00000016004f00640069006e002000630061006d0065007200610100000123000000e80000000000000000fb0000001c005300650067006d0065006e007400650064002000700061007400680100000211000000eb0000000000000000fb00000016004f00640069006e002000630061006d0065007200610100000237000001190000001600fffffffb0000001c005300650067006d0065006e0074006500640020007000610074006801000003560000011a0000001600ffffff0000061f0000043500000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000200000000000002ac000002f7fc0200000001fc0000003d000002f7000000e60100001cfa000000000100000002fb000000100044006900730070006c0061007900730100000000000001560000015600fffffffb0000000a005600690065007700730100000000ffffffff0000010000ffffff0000000100000105000002f7fc0200000002fb00000016004f00640069006e002000630061006d006500720061010000003d000001db0000001600fffffffb0000001c005300650067006d0065006e00740065006400200070006100740068010000021e000001160000001600ffffff00000283000002f700000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Segmented path:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1915
-  X: 1922
-  Y: 35
+  Width: 1600
+  X: 0
+  Y: 27
