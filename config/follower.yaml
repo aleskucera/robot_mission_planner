@@ -73,6 +73,7 @@
     road_goal_source: "route" # carrot | path | route
     carrot_topic: "/cloud_hull_center_marker"
     carrot_type: "marker" # marker | path
+    carrot_rate: 2.0 # Hz: carrots processed, the rest dropped (0 = all); road_goal_smoothing is per processed message, so its EWMA now runs at this rate
     road_goal_min_ahead: 4.0 # m: never send a closer goal
     road_goal_max_ahead: 12.0 # m: farther = projection artefact
     road_goal_smoothing: 0.8 # carrot: 0 = raw, 0.8 = damped

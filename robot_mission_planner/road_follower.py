@@ -212,6 +212,9 @@ class RoadFollower(Node):
         self.declare_parameter("road_goal_source", "carrot")
         self.declare_parameter("carrot_topic", "/cloud_hull_center_marker")
         self.declare_parameter("carrot_type", "marker")  # marker | path (last pose)
+        # Hz: carrot messages actually put through the goal pipeline (0 = every one). The
+        # state machine only reads the latest goal on its 1 Hz tick.
+        self.declare_parameter("carrot_rate", 2.0)
         # The goal is never closer than min_ahead (commander arrival box is 2.5 m) and a
         # candidate farther than max_ahead is discarded as a projection artefact.
         self.declare_parameter("road_goal_min_ahead", 4.0)
@@ -366,6 +369,7 @@ class RoadFollower(Node):
             )
             self.road_goal_source = "carrot"
         self.carrot_type = gp("carrot_type")
+        self.carrot_rate = float(gp("carrot_rate"))
         self.road_goal_min_ahead = gp("road_goal_min_ahead")
         self.road_goal_max_ahead = gp("road_goal_max_ahead")
         self.road_goal_smoothing = gp("road_goal_smoothing")
@@ -522,7 +526,12 @@ class RoadFollower(Node):
         # --- Runtime state ---
         self._latest_road_path = None  # nav_msgs/Path (road_goal_source=path)
         self._latest_carrot = None  # (x, y) in map_frame (road_goal_source=carrot)
+        self._last_carrot_time = 0.0  # time.monotonic() of the last processed carrot
+        self._pose_cache = None  # (robot_pose(),) for the length of one carrot callback
         self._last_road_path_time = None  # node clock seconds of the last road path
+        self._logged_sync_index = None  # indices the two waypoint logs last named
+        self._logged_reached_index = None
+        self._last_road_goal_log = 0.0  # node clock seconds of the last road-goal log
         self._intersections = None  # PoseArray as received
         self._intersections_map = None  # np.ndarray (N, 2) in map_frame
         self._intersections_on_route = None  # the subset of them on the planned route
@@ -709,7 +718,9 @@ class RoadFollower(Node):
         return self.frames.ready or self._geo_goals
 
     def _robot_pose(self):
-        """Robot (x, y, yaw) in map_frame, or None."""
+        """Robot (x, y, yaw) in map_frame, or None (cached during a carrot callback)."""
+        if self._pose_cache is not None:
+            return self._pose_cache[0]
         return self.frames.robot_pose()
 
     def _pose_to_map(self, pose: PoseStamped):
@@ -909,6 +920,13 @@ class RoadFollower(Node):
 
     def _carrot_callback(self, msg):
         """One road-centre point (Marker) or the last pose of a Path -> (x, y) in map_frame."""
+        now = time.monotonic()
+        if (
+            self.carrot_rate > 0
+            and (now - self._last_carrot_time) < 1.0 / self.carrot_rate
+        ):
+            return
+        self._last_carrot_time = now
         if isinstance(msg, Path):
             if not msg.poses:
                 return
@@ -926,7 +944,12 @@ class RoadFollower(Node):
         if xy is None:
             return
         self._latest_carrot = smooth(self._latest_carrot, xy, self.road_goal_smoothing)
-        self._road_input()
+        # The pipeline below asks for the same map_frame <- robot_frame pose up to four times.
+        self._pose_cache = (self.frames.robot_pose(),)
+        try:
+            self._road_input()
+        finally:
+            self._pose_cache = None
 
     def _road_input(self):
         """
@@ -1195,20 +1218,26 @@ class RoadFollower(Node):
         if math.isfinite(min_dist):
             self.route.synced = True
         if best_idx != self.current_waypoint_index:
-            self.get_logger().info(
-                f"Waypoint sync: moving index {self.current_waypoint_index} -> {best_idx} "
-                f"(dist {min_dist:.2f} m)"
-            )
+            # gps_goal_threshold > plan_spacing makes the index ping-pong between two
+            # waypoints every tick: log only when it lands somewhere new.
+            if best_idx != self._logged_sync_index:
+                self._logged_sync_index = best_idx
+                self.get_logger().info(
+                    f"Waypoint sync: moving index {self.current_waypoint_index} -> {best_idx} "
+                    f"(dist {min_dist:.2f} m)"
+                )
             self.current_waypoint_index = best_idx
         if min_dist < self.gps_threshold:
             next_idx = self.current_waypoint_index + 1
             if next_idx >= num_wps:
                 next_idx = 0 if self.loop else num_wps - 1
             if next_idx != self.current_waypoint_index:
-                self.get_logger().info(
-                    f"Reached waypoint {self.current_waypoint_index} ({min_dist:.2f} m); "
-                    f"advancing to {next_idx}"
-                )
+                if self.current_waypoint_index != self._logged_reached_index:
+                    self._logged_reached_index = self.current_waypoint_index
+                    self.get_logger().info(
+                        f"Reached waypoint {self.current_waypoint_index} ({min_dist:.2f} m); "
+                        f"advancing to {next_idx}"
+                    )
                 self.current_waypoint_index = next_idx
 
     def _check_road_goal_reached(self, rob_xy):
@@ -1825,12 +1854,16 @@ class RoadFollower(Node):
         goal_xy = candidate[:2]
         if not self._road_goal_valid(goal_xy):
             return
-        self.get_logger().info(
-            f"Road goal ({self.road_goal_source}): ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) "
-            f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg"
-            + self._road_goal_log_suffix(goal_xy),
-            throttle_duration_sec=2.0,
-        )
+        # Throttled by hand: the suffix costs a TF lookup and a route projection, which the
+        # logger's own throttle would pay for on every suppressed call too.
+        now = self._now()
+        if now - self._last_road_goal_log >= 2.0:
+            self._last_road_goal_log = now
+            self.get_logger().info(
+                f"Road goal ({self.road_goal_source}): ({goal_xy[0]:.2f}, {goal_xy[1]:.2f}) "
+                f"in {self.map_frame}, yaw {math.degrees(candidate[2]):.0f} deg"
+                + self._road_goal_log_suffix(goal_xy)
+            )
         self._goal_active = True
         self._last_road_goal = goal_xy
         self.backend.send_pose(goal_xy[0], goal_xy[1], candidate[2])
