@@ -474,7 +474,9 @@ class RoadFollower(Node):
             # Replace whatever route an earlier follower left in rviz and the HUD.
             self._publish_route()
             if self.mode.route:
-                self.state = self.STATE_IDLE  # mission: wait for a goal to plan a route to
+                self.state = (
+                    self.STATE_IDLE
+                )  # mission: wait for a goal to plan a route to
 
         if self._geo_goals:
             self._process_waypoints()  # lat/lon goals, no transform needed
@@ -681,11 +683,13 @@ class RoadFollower(Node):
         self.gps_path = resolve_file(self.gps_file_name, search)
         if not os.path.exists(self.gps_path):
             self.get_logger().error(f"Route file {self.gps_path} does not exist!")
+            self.gps_path = ""
             return []
         try:
             points_raw = load_waypoints(self.gps_path, self.reverse)
         except Exception as e:
             self.get_logger().error(f"Failed to parse the route file: {e}")
+            self.gps_path = ""
             return []
         self.get_logger().info(
             f"Loaded {len(points_raw)} waypoints from {self.gps_path}"
