@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Waypoint following, no road: the follower in its gps mode. Kept as the name the old
-       gps_follower_ros2 node was launched under; the waypoints are a GPX/YAML file, or a
-       route planned from a QR goal when no file is given. -->
+  <!-- Follower in gps mode (legacy gps_follower_ros2 alias). GPX/YAML file or QR goal. -->
   <arg name="gps_file" default="" />
   <arg name="nav_backend" default="" />
 

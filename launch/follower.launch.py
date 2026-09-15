@@ -1,23 +1,17 @@
-"""The follower, in one of its three modes.
-
+"""Follower launch script.
+Usage examples:
     ros2 launch robot_mission_planner follower.launch.py mode:=road_gps
     ros2 launch robot_mission_planner follower.launch.py mode:=gps gps_file:=stromovka.gpx
     ros2 launch robot_mission_planner follower.launch.py mode:=road nav_backend:=follow_path
 
-mode:=road_gps  the road, handing over to the route's waypoints at OSM intersections, on
-                road-detection loss, on STUCK and for the final approach (Robotour, default)
-mode:=gps       the route's waypoints only, never look at the road
-mode:=road      the road only: no route, no intersections, no goal to arrive at
+Modes:
+  road_gps: follow road, fallback to route at intersections/errors/final approach (default)
+  gps: follow route waypoints only
+  road: follow road only (no route/intersections/goal)
 
-The route of the two route modes comes from gps_file (a GPX or YAML file); with no file the
-follower waits for a QR goal and has route_planner plan the route to it.
-
-config/follower.yaml holds every parameter and is the file to edit; config/modes/<mode>.yaml
-is loaded on top of it and names only what that mode changes. The arguments below override
-both, and only when given, so editing the YAML is enough.
-
-The node keeps the name road_follower: mission_hud, rviz, the map_data viewer and the bag
-tools all listen to /road_follower/state, /road_follower/event and the goal topics.
+Route comes from `gps_file` (GPX/YAML) or QR goal via `route_planner`.
+Configuration: `config/follower.yaml` + `config/modes/<mode>.yaml` + launch arguments.
+Node name remains `road_follower` for compatibility with existing tools.
 """
 
 import os
@@ -28,8 +22,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-# launch argument -> node parameter (an argument left empty is not passed at all, so the
-# config file keeps the last word)
+# map launch args to node params (empty args are ignored to prefer config defaults)
 OVERRIDES = {
     "gps_file": "file",
     "nav_backend": "nav_backend",

@@ -1,26 +1,20 @@
-# The follower (follower.launch): every parameter it reads, for all three modes.
-# The per-mode overlay in config/modes/<mode>.yaml is loaded on top of this file and only
-# names what that mode changes; the launch file adds the few arguments that are switched
-# from the command line (mode, gps_file, nav_backend, road_goal_source, carrot_topic).
+# Follower base parameters (follower.launch) overridden by config/modes/<mode>.yaml.
+# Launch arguments override mode, gps_file, nav_backend, road_goal_source, carrot_topic.
 /**:
   ros__parameters:
-    # What the follower does (config/modes/<mode>.yaml sets this; here for completeness):
-    #   road_gps  follow the road, hand over to the route at intersections, when the road
-    #             is lost, when the commander is stuck and for the final approach
-    #   gps       follow the route's waypoints only, never look at the road
-    #   road      follow the road only: no route, no intersections, no goal
+    # Operating mode:
+    #   road_gps: follow road, use route at intersections/fallback/final approach
+    #   gps: follow route waypoints only
+    #   road: follow road only (no route/goal)
     mode: "road_gps"
 
-    # Navigation backend: "commander" (crl_commander on the Helhest NUC), "nav2"
-    # (NavigateToPose + FollowWaypoints) or "follow_path" (a bare pure-pursuit controller,
-    # usable in mode road only -- it has no notion of a waypoint sequence).
+    # Navigation backend: "commander", "nav2", or "follow_path" (road mode only)
     nav_backend: "commander"
     use_utm: true # nav2 only: UTM goals vs lat/lon goals
     follow_path_action: "follow_path" # follow_path only: the nav2 FollowPath action
     follow_path_spacing: 0.25 # follow_path only: m between the synthetic path poses
 
-    # Frames (Helhest/Fixposition defaults). map_frame is the fixed frame all distances are
-    # measured in; earth_frame is the ECEF frame GPX waypoints are published in.
+    # Frames (distances measured in map_frame, GPX in earth_frame)
     map_frame: "FP_ENU0"
     robot_frame: "base_link"
     earth_frame: "FP_ECEF"
@@ -47,9 +41,7 @@
     # Visualisation: diameter of a route waypoint sphere on gps_waypoints_markers, m
     waypoint_marker_scale: 0.8
 
-    # Route file: GPX or YAML with the pre-planned waypoints (absolute, or relative to
-    # robot_mission_planner/data), from the map_data viewer planner ("Paths only"). Empty =
-    # mission mode: wait for QR goals. Overridden by gps_file, ignored in mode road.
+    # Route file (GPX/YAML). Empty = mission mode (wait for QR goals). Ignored in road mode.
     file: ""
     start: 0 # start index of the waypoints
     reverse: false
@@ -58,41 +50,25 @@
     # Thresholds
     intersection_enter_threshold: 5.0 # m: switch ROAD -> GPS
     intersection_exit_threshold: 6.0 # m: from every intersection to switch back
-    # Only intersections within this distance (m) of the planned route count at all:
-    # kralovska_obora has 273 rings, and one on a side junction the route merely drives past
-    # must not switch the follower to GPS. 0 = every ring counts.
+    # Max distance (m) to planned route for an intersection to count (0 = all count)
     intersection_route_max_offset: 3.0
-    gps_goal_threshold: 4.0 # m: waypoint / road goal reached
+    gps_goal_threshold: 5.0 # m: waypoint / road goal reached
     lookahead_sync_window: 15 # waypoints searched for the closest one
     road_goal_update_distance: 1.0 # m: min shift of the road goal to re-send it
     require_waypoint_reached_to_exit_gps: false
     gps_exit_require_passed: true # leave GPS only after passing the intersection along the route
     gps_exit_min_waypoints: 0 # waypoints to advance before leaving GPS mode
-    # Waypoints sent per sequence. 0 = the whole remaining route: mission routes never
-    # loop and every window end is a STOP + re-send (a stop every 30 m with 10).
+    # Waypoints per sequence (0 = whole remaining route)
     gps_sequence_window: 0
-    # Note: the commander starts each sequence at nearest+1 (sequence_start_from_next), so
-    # its first driven goal is ~2 waypoints (6 m) ahead of the follower's own index. At
-    # least the last two waypoints are always sent.
-    # ROAD <-> GPS hand-over: the commander is switched goto <-> sequence directly (its own
-    # transition cancels the old goal), with no STOP and no pause. stop_between_modes
-    # restores the STOP + 1 s; transition_delay adds a pause (s) before the new goal.
+    # ROAD <-> GPS hand-over behavior
     stop_between_modes: false
     transition_delay: 0.0
-    # A gap this long (s) on commander_state_topic = the commander was restarted: the
-    # sequence source is re-configured and the current goal re-sent (0 = off).
+    # Commander restart detection timeout (s) (0 = off)
     commander_restart_gap: 5.0
-    # The waypoint frame (ECEF/UTM) -> map_frame transform is looked up again this often: a
-    # Fixposition restart re-defines FP_ENU0 and the waypoints then have to be placed again
-    # (they move by more than 0.1 m). 0 = resolve it once at startup only.
+    # Waypoint frame -> map_frame transform update period (0 = startup only)
     waypoint_tf_recheck_period: 10.0
 
-    # Road goal source. carrot: the convex-hull centre of the road points in the current
-    # lidar frame (build_point_cloud /cloud_hull_center_marker; or a Path's last pose with
-    # carrot_type: path). path: /predicted_path_ls from path_predictor. route: the carrot
-    # stretched along the planned OSM route (see route_stretch_distance below). The goal is
-    # always kept road_goal_min_ahead in front of the robot: crl_commander treats a goal
-    # inside its 2.5 m arrival box as reached and stops.
+    # Road goal source: carrot (hull center), path (predicted), or route (carrot stretched along route)
     road_goal_source: "route" # carrot | path | route
     carrot_topic: "/cloud_hull_center_marker"
     carrot_type: "marker" # marker | path
@@ -101,63 +77,40 @@
     road_goal_smoothing: 0.0 # carrot: 0 = raw, 0.8 = damped
     road_goal_reached_distance: 2.5 # m: forget the active road goal
 
-    # road_goal_source: "route" only. The hull centre lags the robot (it is the centre of what
-    # the lidar sees, not a point down the road), so the plain carrot goal degenerates into
-    # "min_ahead metres along the current heading" and is thrown off the path by a bend. Here
-    # robot and carrot are projected onto the planned route instead, the goal goes
-    # route_stretch_distance further along it from whichever is ahead, and the carrot's own
-    # lateral offset is carried over. The route contributes the shape of the road only: its
-    # absolute position carries the OSM and GNSS error, and both cancel because the offset is
-    # re-measured against the same route every frame. The goal still obeys the
-    # road_goal_max_route_offset limits and road_goal_min_ahead / road_goal_max_ahead.
-    route_stretch_distance: 6.0 # m along the route past the robot/carrot projection
+    # Project robot/carrot onto route and add stretch distance along it, carrying over offset
+    route_stretch_distance: 2.0 # m along the route past the robot/carrot projection
     route_lateral_gain: 1.0 # how much of the carrot's offset is carried over
     route_stretch_max_turn: 45.0 # deg: do not stretch past a sharper corner (0 = off)
     route_projection_window: 10 # waypoints searched around the current index (0 = all)
-    # true = keep following the route (at the robot's own offset) when no carrot arrives, i.e.
-    # drive the map blind instead of falling back to GPS mode after road_path_timeout.
+    # true = drive blindly along route offset when no carrot arrives
     route_goal_without_carrot: false
 
-    # Mission (Robotour): QR goal -> route_planner -> 5 s pause -> follow -> arrive -> idle
+    # Mission (QR goal -> plan -> wait -> follow -> arrive -> idle)
     qr_goal_topic: "/qr_goal/goal" # GeoPointStamped from qr_goal
     plan_route_action: "/route_planner/plan_route"
     plan_spacing: 3.0 # m between route waypoints
     plan_retries: 3
     plan_retry_delay: 5.0 # s
-    # Failure reasons a retry cannot change: the goal is dropped after the first attempt.
-    # snap_too_far = farther from any way than route_planner's goal_max_snap_distance
-    # (30 m), i.e. a wrong or off-map QR code.
+    # Failure reasons that skip retries
     plan_no_retry_reasons: ["snap_too_far"]
     plan_timeout: 60.0 # s per attempt
     start_delay: 5.0 # s: route received -> first command
     goal_reached_radius: 5.0 # m to the last waypoint = arrived
     arrival_index_window: 3 # waypoints from the end that count
-    # s in ARRIVED before IDLE: long enough for the arrival signal (mission_signal) and for
-    # the operator to see ARRIVED on the HUD; the next QR goal is the continue signal.
+    # Wait time (s) in ARRIVED before returning to IDLE
     arrived_hold: 2.0
-    # Final approach (P2): with less route left than this (m) the follower enters GPS with
-    # reason "final" and stays there to the last waypoint, which the planner puts on the goal
-    # coordinate itself -- off the footway when the goal is, where there is no road to
-    # follow. 0 = off (road following right up to the arrival radius).
+    # Final approach (m): force GPS mode to the final waypoint (0 = off)
     final_approach_distance: 15.0
-    # /qr_goal/goal is latched: a goal stamped earlier than this (s) before the follower
-    # started is the previous run's goal and is ignored (0 = accept everything).
+    # Ignore QR goals stamped older than this (s) before startup (0 = accept all)
     stale_goal_tolerance: 2.0
-    # A QR goal seen while the follower is busy is buffered and taken when the leg ends
-    # (qr_goal shows the same code only every republish_after_s). A goal closer than this (m)
-    # to the goal of the current leg is that same code seen again and is dropped.
+    # Ignore buffered goals closer than this (m) to the current leg's goal
     pending_goal_min_distance: 2.0
-    # Home capture (R3): at the first goal of a run the follower writes its own fix to
-    # <mission_dir>/home_<date>.txt and home.txt and publishes it on home_topic;
-    # `qr_goal_send --home` sends it back as the return goal. route_planner keeps its
-    # mission GPX files in the same directory.
+    # Directory for mission GPX and home position files
     mission_dir: "~/missions"
 
     # Road-goal sanity and failure handling
-    road_goal_max_route_offset: 5.0 # m: reject road goals farther from the planned route (0 = off)
-    # The robot itself sits up to ~5 m off the OSM line under trees (2026-09-08: 90 % within
-    # 4.4 m), so the limit is relative: goal offset <= max(limit, robot offset + margin),
-    # capped by the hard limit (0 = no cap).
+    road_goal_max_route_offset: 7.0 # m: reject road goals farther from the planned route (0 = off)
+    # Relative limit margin over robot's own offset
     road_goal_route_offset_margin: 2.0
     road_goal_max_route_offset_hard: 10.0
     road_goal_reject_behind: true

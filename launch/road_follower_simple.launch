@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Plain road following: the follower in its road mode (no route, no intersections).
-       Kept as the name the old road_follower_simple node was launched under. -->
+  <!-- Follower in road mode (legacy road_follower_simple alias). No route/intersections. -->
   <arg name="nav_backend" default="" />
   <arg name="road_goal_source" default="" />
   <arg name="carrot_topic" default="" />

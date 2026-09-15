@@ -182,9 +182,7 @@ class RoadFollower(Node):
         self.declare_parameter(
             "intersection_exit_threshold", 4.0
         )  # m: from all intersections
-        # Only intersections this close (m) to the planned route take part in the enter/exit
-        # decisions (P4): a ring on a side junction the route merely drives past is not ours
-        # (273 of them in kralovska_obora). 0 = every ring counts.
+        # Max distance (m) to planned route for an intersection to count (0 = all count)
         self.declare_parameter("intersection_route_max_offset", 3.0)
         self.declare_parameter("gps_goal_threshold", 3.0)  # m: waypoint reached
         self.declare_parameter(
@@ -193,8 +191,7 @@ class RoadFollower(Node):
         self.declare_parameter(
             "road_goal_update_distance", 1.0
         )  # m: re-send active road goal
-        # GPS -> ROAD hysteresis: require having passed the intersection along the route
-        # direction (not just a radius), and/or a number of waypoints advanced since entry.
+        # GPS -> ROAD hysteresis: require passing the intersection and/or advancing waypoints.
         self.declare_parameter("gps_exit_require_passed", True)
         self.declare_parameter("gps_exit_min_waypoints", 0)
         # Legacy: additionally require being within gps_goal_threshold of the current waypoint.
@@ -202,14 +199,11 @@ class RoadFollower(Node):
         # Road-goal sanity: reject goals farther than this from the planned route (0 = off)
         # or behind the robot, so a bad segmentation cannot pull us off the mission.
         self.declare_parameter("road_goal_max_route_offset", 5.0)
-        # The robot itself drives up to ~5 m off the OSM centreline under trees, so the limit
-        # is relative: margin farther off than the robot is, capped by the hard limit.
+        # Relative limit margin over robot's own offset
         self.declare_parameter("road_goal_route_offset_margin", 2.0)
         self.declare_parameter("road_goal_max_route_offset_hard", 10.0)
         self.declare_parameter("road_goal_reject_behind", True)
-        # Where the ROAD goal comes from: "carrot" = one road-centre point per lidar frame
-        # (convex-hull centre from build_point_cloud), "path" = /predicted_path_ls from
-        # path_predictor, "route" = the carrot stretched along the planned OSM route.
+        # Road goal source: carrot (hull center), path (predicted), or route (carrot stretched along route)
         self.declare_parameter("road_goal_source", "carrot")
         self.declare_parameter("carrot_topic", "/cloud_hull_center_marker")
         self.declare_parameter("carrot_type", "marker")  # marker | path (last pose)
@@ -223,12 +217,8 @@ class RoadFollower(Node):
         # Commander backend: forget the active road goal once this close to it, so the
         # next observation re-sends one (the commander's own arrival box is 2.5 m).
         self.declare_parameter("road_goal_reached_distance", 2.5)
-        # road_goal_source "route": how far (m) along the route past the robot / carrot
-        # projection the goal goes, how much of the carrot's lateral offset is carried over
-        # to it, the sharpest corner (deg) the stretch may pass (0 = no limit) and how many
-        # waypoints around the current index are searched when projecting (0 = all of them;
-        # a route folding back on itself needs a window). route_goal_without_carrot keeps
-        # driving the mapped route blind, at the robot's own offset: off by default.
+        # Project robot/carrot onto route and add stretch distance along it, carrying over offset.
+        # route_goal_without_carrot: keep driving route offset blindly when no carrot arrives.
         self.declare_parameter("route_stretch_distance", 6.0)
         self.declare_parameter("route_lateral_gain", 1.0)
         self.declare_parameter("route_stretch_max_turn", 45.0)
@@ -291,9 +281,7 @@ class RoadFollower(Node):
         self.declare_parameter(
             "arrived_hold", 0.0
         )  # s to stay ARRIVED before IDLE (signal later)
-        # Final approach: with less route left than this (m) the follower stays in GPS to the
-        # last waypoint, which the planner puts on the goal coordinate itself -- possibly off
-        # the footway (a loading zone on a lawn), where there is no road to follow. 0 = off.
+        # Final approach (m): force GPS mode to the final waypoint (0 = off)
         self.declare_parameter("final_approach_distance", 15.0)
         self.declare_parameter(
             "event_topic", "~/event"
@@ -304,13 +292,9 @@ class RoadFollower(Node):
         # `qr_goal_send --home` instead of typed in.
         self.declare_parameter("home_topic", "~/home")  # latched GeoPointStamped
         self.declare_parameter("mission_dir", "~/missions")
-        # qr_goal_topic is latched, so a restart would re-deliver the previous run's goal and
-        # the follower would drive off unprompted: goals stamped more than this (s) before
-        # the node started are ignored. 0 = accept everything.
+        # Ignore QR goals stamped older than this (s) before startup (0 = accept all)
         self.declare_parameter("stale_goal_tolerance", 2.0)
-        # A goal arriving while the follower is busy is buffered until the leg ends (qr_goal
-        # suppresses the same code for republish_after_s, so it would otherwise be lost). One
-        # this close (m) to the goal being driven is that same code again, and is dropped.
+        # Ignore buffered goals closer than this (m) to the current leg's goal
         self.declare_parameter("pending_goal_min_distance", 2.0)
 
         gp = lambda n: self.get_parameter(n).value  # noqa: E731

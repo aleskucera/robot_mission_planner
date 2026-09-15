@@ -1,23 +1,19 @@
-# mission_signal (mission_signal.launch): road_follower mission events -> a signal a
-# bystander notices. Robotour wants the robot to indicate its arrival, and homologation
-# tests the signalization and the continue of the trial (review R1).
+# Translate road_follower events into audio signals
 /**:
   ros__parameters:
     event_topic: "/road_follower/event" # latched String from road_follower
-    # speak: publish the sentence for helhest_bringup nodes/speak.py -> sound_play (needs the
-    # NUC sound.launch running); aplay: play a wav; log: only log; gpio: placeholder for the
-    # light backend (_signal_gpio in mission_signal.py).
+    # Backend: speak (text-to-speech), aplay (wav files), log, or gpio
     backend: "speak"
-    speak_topic: "/speak/info" # speak backend: /speak/info | /speak/warn | /speak/err
+    # Speak backend topics by level ("" = off)
+    speak_info_topic: "/speak/info"
+    speak_warn_topic: "/speak/warn"
+    speak_error_topic: "/speak/err"
     player_command: "aplay -q" # aplay backend: the file path is appended
     sound_dir: "" # aplay backend: empty = the package data/ directory
-    # The event topic is latched and std_msgs/String carries no stamp, so the first message
-    # received within this many seconds of the start is taken for the previous run's latched
-    # event and dropped (0 = signal everything, including that one).
+    # Ignore first message within this time (s) to drop old latched events (0 = off)
     ignore_latched_s: 1.0
 
-    # What to say for each event, keyed by the event name (the part before the first ":").
-    # An empty value switches an event off; an event that is not listed is only logged.
+    # Spoken text per event. Empty = off, unlisted = logged only.
     speech:
       GOAL: "Goal accepted"
       ROUTE: "Route planned"
@@ -28,8 +24,18 @@
       PLAN_FAILED: "Planning failed"
       IDLE: "Waiting for a goal"
 
-    # The same table for the aplay backend: file names relative to sound_dir, or absolute
-    # paths. A missing file is warned about once and then ignored.
+    # Speak level (info/warn/error) per event. Unlisted = info.
+    speech_level:
+      GOAL: "info"
+      ROUTE: "info"
+      START: "info"
+      ARRIVED: "info"
+      CONTINUE: "info"
+      ABORT: "warn"
+      PLAN_FAILED: "error"
+      IDLE: "info"
+
+    # Audio files for aplay backend (relative to sound_dir or absolute)
     sounds:
       GOAL: "goal.wav"
       ROUTE: "route.wav"

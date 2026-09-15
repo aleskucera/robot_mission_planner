@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Robotour goal QR reader: camera -> geo:lat,lon -> /qr_goal/goal (GeoPointStamped, read by
-       road_follower). Camera, rates and topics live in the config file. -->
+  <!-- QR reader: camera -> /qr_goal/goal for road_follower. -->
   <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/qr_goal.yaml" />
 
   <node pkg="robot_mission_planner" exec="qr_goal" name="qr_goal" output="screen">

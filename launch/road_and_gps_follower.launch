@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Kept for the robot's tmux sessions and the replay scripts: the follower in its
-       road_gps mode. New setups should use follower.launch.py directly. -->
+  <!-- Follower in road_gps mode (legacy alias for tmux/replay scripts) -->
   <arg name="gps_file" default="" />
   <arg name="nav_backend" default="" />
   <arg name="road_goal_source" default="" />

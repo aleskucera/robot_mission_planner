@@ -1,49 +1,41 @@
-# mission_hud (mission_rviz.launch.py): the overlays of the operator view. Nothing here
-# drives the robot; the node only subscribes.
+# Operator view overlays (node only subscribes, does not drive robot)
 /**:
   ros__parameters:
     # Frames the HUD measures route progress in (same defaults as road_follower).
     map_frame: "FP_ENU0"
     robot_frame: "base_link"
 
-    # Inputs; an empty topic simply leaves that line of the panel empty.
+    # Input topics (empty topic leaves panel line empty)
     follower_state_topic: "/road_follower/state"
     follower_event_topic: "/road_follower/event"
     commander_state_topic: "/crl_commander/state"
     planner_status_topic: "/route_planner/status"
-    # The route being followed and its source ("file <path>" | "route_planner"), both from
-    # road_follower, so a GPX/YAML route shows up as well as a planned one.
+    # Route and source topics from road_follower
     route_path_topic: "/road_follower/route_path"
     route_source_topic: "/road_follower/route_source"
-    # Used only until route_path_topic has sent anything: bags recorded before road_follower
-    # published its route. It holds the last planned route, stale while a file is driven.
+    # Fallback route for older bags before road_follower published its route
     planner_route_path_topic: "/route_planner/route_path"
     qr_goal_topic: "/qr_goal/goal"
     estop_topic: "/estop_active"
     battery_topic: "/battery_state"
     temperature_topic: "/temperatures"
     gps_fix_topic: "/fixposition/odometry_llh"
-    # Control source (status panel): helhest_llc republishes the RC receiver as /joy and
-    # button 10 is the take-over switch -- held = the LLC drives from the sticks and
-    # ignores /cmd_vel, released = ROS drives.
+    # Control source toggle: button 10 held = RC override, released = ROS
     joy_topic: "/joy"
     rc_override_button: 10
-    # Velocity rows (status panel): measured forward speed and yaw rate from the wheel
-    # odometry (twist in base_link) and the commanded /cmd_vel (TwistStamped).
+    # Velocity display: odometry (measured) and cmd_vel (commanded)
     odom_topic: "/odom_2d"
     cmd_vel_topic: "/cmd_vel"
-    # /joy, odometry and /cmd_vel older than this [s] show as unknown / silent.
+    # Timeout [s] before inputs show as unknown/silent
     stale_timeout: 1.0
 
     # Panel look. Sizes are in pixels of the 3D render panel.
     text_size: 12.0
-    # Mission panel (top left) and status panel (top right). Together with the two margins
-    # they must fit the 3D view (~1220 px in the operator layout), or the panels overlap and
-    # rviz draws either one on top. ~9.6 px per character at text_size 12.
+    # Panel dimensions. Must fit 3D view width (~1220 px) to avoid overlap.
     panel_width: 620
     panel_max_chars: 60 # lines are truncated rather than wrapped
     status_panel_width: 470
-    status_panel_max_chars: 46 # longest status row: "control   RC CONTROLLER   (/cmd_vel ignored)"
+    status_panel_max_chars: 46
     panel_margin: 8
     panel_bg_alpha: 0.55
     font: "DejaVu Sans Mono"
@@ -52,8 +44,7 @@
     # Optional last line of the mission panel, free text. "" = no line.
     hint: ""
 
-    # Placeholder body box: only useful with description:=false and nothing else publishing
-    # /robot_description (the rviz RobotModel display is off to match).
+    # Placeholder body box when /robot_description is unavailable
     robot_body: false
     robot_body_size: [0.9, 0.7, 0.35]
     robot_body_offset_z: 0.25

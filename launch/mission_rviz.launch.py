@@ -1,17 +1,11 @@
-"""Operator view of a Robotour mission: rviz2 with rviz/robotour.rviz + mission_hud.
+"""Operator view (rviz2 + mission_hud). Only subscribes, does not drive.
+Usage: ros2 launch robot_mission_planner mission_rviz.launch.py
 
-    ros2 launch robot_mission_planner mission_rviz.launch.py
-
-Camera and segmented path across the top, the mission scene below, follower /
-route / commander on the left of the 3D view and e-stop / battery / temps / GNSS
-on the right. Nothing here drives the robot; it only subscribes.
-
-    rviz:=false         just the HUD node (someone else runs rviz, e.g. over a tunnel)
-    hud:=false          just rviz (a mission_hud is already running elsewhere)
-    config:=<path>      another rviz config
-    params:=<path>      another mission_hud config (default: config/mission_hud.yaml)
-
-The frames, topics and panel look of the HUD are in config/mission_hud.yaml.
+Args:
+    rviz:=false     disable rviz (run only HUD)
+    hud:=false      disable HUD (run only rviz)
+    config:=<path>  custom rviz config
+    params:=<path>  custom mission_hud config (default: config/mission_hud.yaml)
 """
 
 import os

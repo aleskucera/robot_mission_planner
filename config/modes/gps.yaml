@@ -1,11 +1,8 @@
-# mode: gps -- follow the route's waypoints from beginning to end, never look at the road.
-# The route is a file (file: a GPX or YAML) or a mission goal planned by route_planner,
-# exactly as in road_gps mode; only the road half is switched off.
+# mode: gps -- follow route waypoints only, ignore road
 /**:
   ros__parameters:
     mode: "gps"
-    # No road observations are subscribed, so the road-loss fallback has nothing to watch
-    # (and would log about it every second).
+    # Disable road-loss fallback (no road observations subscribed)
     road_path_timeout: 0.0
-    # The whole remaining route in one sequence: every window end is a stop.
+    # Whole remaining route in one sequence
     gps_sequence_window: 0

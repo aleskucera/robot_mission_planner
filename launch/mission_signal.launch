@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <!-- Mission signal: road_follower events (ARRIVED, GOAL, ...) -> speech on /speak/info
-       (helhest_bringup speak.py -> sound_play), a wav through aplay, or just the log.
-       Backend, topics and the event -> text/sound table live in the config file. -->
+  <!-- Mission signal: map road_follower events to audio via config file -->
   <arg name="config" default="$(find-pkg-share robot_mission_planner)/config/mission_signal.yaml" />
 
   <node pkg="robot_mission_planner" exec="mission_signal" name="mission_signal" output="screen">
