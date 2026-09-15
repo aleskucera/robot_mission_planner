@@ -284,9 +284,13 @@ class RoadFollower(Node):
         )  # m between route waypoints (0 = planner default)
         self.declare_parameter("plan_retries", 3)  # attempts before giving up on a goal
         self.declare_parameter("plan_retry_delay", 5.0)  # s between attempts
-        # PlanRoute failure reasons that will not change on a retry (the goal is too far
-        # from any way): give up on the goal at once instead of plan_retries attempts.
-        self.declare_parameter("plan_no_retry_reasons", ["snap_too_far"])
+        # PlanRoute failure reasons that will not change on a retry (the robot or the goal is
+        # off the loaded map, or the goal too far from any way): give up on the goal at once
+        # instead of plan_retries attempts; IDLE then resumes QR detection.
+        self.declare_parameter(
+            "plan_no_retry_reasons",
+            ["snap_too_far", "start_outside_map", "goal_outside_map"],
+        )
         self.declare_parameter(
             "plan_timeout", 60.0
         )  # s for one attempt (server + planning)

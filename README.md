@@ -51,8 +51,9 @@ GPX mission (map_data viewer "Paths only") ──────┘
 Mission mode (no `gps_file`): the follower starts **IDLE** and waits for a QR goal
 (`/qr_goal/goal`, see *QR goal input*). It then goes **PLANNING**: it asks `route_planner`'s
 `PlanRoute` action for a paths-only route from its own GNSS fix to the goal (`plan_retries`
-attempts, `plan_retry_delay` apart, back to IDLE on failure; a `snap_too_far` answer, the
-goal being off the map, is not retried: `plan_no_retry_reasons`), logs the accepted goal (an
+attempts, `plan_retry_delay` apart, back to IDLE on failure; a `start_outside_map` (robot
+off the loaded map: wrong map file?), `goal_outside_map` or `snap_too_far` answer is not
+retried: `plan_no_retry_reasons`, and IDLE resumes QR detection), logs the accepted goal (an
 audible signal will be added here), waits `start_delay` (5 s) and then follows the route
 with the ROAD/GPS logic below. Within `goal_reached_radius` (5 m) of the last waypoint it
 stops the commander, reports **ARRIVED** and returns to IDLE for the next goal. A QR goal

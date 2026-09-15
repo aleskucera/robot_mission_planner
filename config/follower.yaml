@@ -108,7 +108,7 @@
     plan_retries: 3
     plan_retry_delay: 5.0 # s
     # Failure reasons that skip retries
-    plan_no_retry_reasons: ["snap_too_far"]
+    plan_no_retry_reasons: ["snap_too_far", "start_outside_map", "goal_outside_map"]
     plan_timeout: 60.0 # s per attempt
     start_delay: 5.0 # s: route received -> first command
     goal_reached_radius: 5.0 # m to the last waypoint = arrived
