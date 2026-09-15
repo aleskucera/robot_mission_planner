@@ -62,7 +62,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from ros2_numpy import numpify
 from sensor_msgs.msg import NavSatFix, PointCloud2
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
+from std_srvs.srv import SetBool, Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_mission_planner.follower import modes
@@ -276,6 +276,8 @@ class RoadFollower(Node):
         self.declare_parameter(
             "qr_goal_topic", "/qr_goal/goal"
         )  # GeoPointStamped, latched
+        # qr_goal ~/enable (SetBool): camera decoding paused while a leg runs ("" = never)
+        self.declare_parameter("qr_detection_service", "/qr_goal/enable")
         self.declare_parameter("plan_route_action", "/route_planner/plan_route")
         self.declare_parameter(
             "plan_spacing", 3.0
@@ -547,6 +549,11 @@ class RoadFollower(Node):
         # the first goal accepted after an arrival is announced as CONTINUE as well.
         self._continue_after_arrival = False
         self._plan_client = None
+        # qr_goal's camera detection is paused while a leg is planned or driven and resumed
+        # on arrival / IDLE; _sync_qr_detection sends the wanted value once the service is up.
+        self._qr_detection_client = None
+        self._qr_detection_wanted = True
+        self._qr_detection_sent = None
 
         self.pose_gps = None
 
@@ -583,6 +590,10 @@ class RoadFollower(Node):
             self.create_subscription(
                 GeoPointStamped, gp("qr_goal_topic"), self._qr_goal_callback, latched
             )
+            if gp("qr_detection_service"):
+                self._qr_detection_client = self.create_client(
+                    SetBool, gp("qr_detection_service")
+                )
             try:
                 from map_data_interfaces.action import PlanRoute
 
@@ -1091,6 +1102,7 @@ class RoadFollower(Node):
 
     def _main_logic_step(self):
         self._publish_state()
+        self._sync_qr_detection()
         if self.state == self.STATE_ARRIVED:
             if (self._now() - self._arrived_time) >= self.arrived_hold:
                 self._enter_idle("arrived, ready for the next goal")
@@ -1470,6 +1482,7 @@ class RoadFollower(Node):
         self._mission_goal = (lat, lon)
         self._plan_attempt = 0
         self.state = self.STATE_PLANNING
+        self._qr_detection_wanted = False
         self._publish_state()
         self._request_route()
 
@@ -1654,6 +1667,7 @@ class RoadFollower(Node):
             f"Goal reached ({d:.1f} m from the last waypoint): stopping."
         )
         self.state = self.STATE_ARRIVED
+        self._qr_detection_wanted = True  # the next code shown is the continue signal (R1)
         self._arrived_time = self._now()
         self._cancel_plan_timer()
         if self._pending_goal_timer:
@@ -1695,6 +1709,7 @@ class RoadFollower(Node):
     def _enter_idle(self, why: str):
         self.get_logger().info(f"{why}. Waiting for a QR goal (IDLE).")
         self.state = self.STATE_IDLE
+        self._qr_detection_wanted = True  # a buffered goal taken below pauses it again
         self._mission_goal = None
         self._plan_goal_handle = None
         self._cancel_plan_timer()
@@ -1706,6 +1721,25 @@ class RoadFollower(Node):
                 f"Taking the buffered QR goal {pending[0]:.7f}, {pending[1]:.7f}"
             )
             self._take_goal(*pending)
+
+    def _sync_qr_detection(self):
+        """
+        Send ``_qr_detection_wanted`` to qr_goal's ``~/enable`` when it differs from what was
+        last sent. Called from the 1 Hz main step, so a pause and resume in the same tick
+        (IDLE -> buffered goal) never reach qr_goal, and a restarted follower re-enables it.
+        """
+        client = self._qr_detection_client
+        if client is None or self._qr_detection_sent == self._qr_detection_wanted:
+            return
+        if not client.service_is_ready():
+            return
+        req = SetBool.Request()
+        req.data = self._qr_detection_wanted
+        client.call_async(req)
+        self._qr_detection_sent = req.data
+        self.get_logger().info(
+            f"QR camera detection {'resumed' if req.data else 'paused'}"
+        )
 
     # ------------------------------------------------------------------ goal dispatch
     def _schedule_goal(self, delay_sec, mode):

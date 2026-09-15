@@ -3,7 +3,8 @@
   ros__parameters:
     image_topic: "/odin1/image/compressed"
     image_transport: "compressed" # compressed | raw
-    process_rate: 4.0 # Hz: decode at most this often
+    process_rate: 2.0 # Hz: decode at most this often
+    decode_downscale: 2 # 1|2|4|8: decode frames smaller (less CPU, the code must look bigger)
     confirm_frames: 2 # consecutive frames before a goal
     # Cooldown before re-publishing same code (s)
     republish_after_s: 10.0

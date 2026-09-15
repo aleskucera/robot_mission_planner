@@ -204,6 +204,14 @@ Robotour hands the goal over as a QR code with a geo URI payload (`geo:lat,lon`,
 latched `geographic_msgs/GeoPointStamped` on `/qr_goal/goal`; `road_follower` picks it up when
 idle, asks `route_planner` for a route and follows it (see the mission states above). A payload must be decoded in `confirm_frames` consecutive
 processed frames and is published once (again only after `republish_after_s`, 10 s).
+`road_follower` pauses camera decoding through `/qr_goal/enable` while a leg is planned or
+driven and resumes it on arrival, abort or a failed plan (`qr_detection_service`, `""` to leave
+it on); typed goals on `~/text` are taken either way.
+
+CPU on the Jetson: one code per frame (`detectAndDecode`), JPEGs decoded straight to
+`decode_downscale`-times smaller grey, a single OpenCV thread, and frames above `process_rate`
+dropped before they are deserialized. Raise `decode_downscale` for less CPU, lower it if a code
+at the distance it is shown from is not read.
 
 ```bash
 ros2 launch robot_mission_planner qr_goal.launch    # reads /odin1/image/compressed
@@ -222,7 +230,7 @@ ros2 service call /road_follower/abort std_srvs/srv/Trigger
 ```
 
 Parameters (in `config/qr_goal.yaml`): `image_topic`, `image_transport` (`compressed` | `raw`),
-`process_rate` (Hz), `confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`,
+`process_rate` (Hz, 2), `decode_downscale` (1 | 2 | 4 | 8), `confirm_frames`, `republish_after_s`, `goal_topic`, `text_topic`,
 `detections_topic`, `publish_annotated` (`~/image_annotated` with the code outlined, for rqt),
 `enabled`. The
 default camera is the Odin (`/odin1/image/compressed`); the Basler

@@ -115,6 +115,22 @@ def test_decode_qr_inside_a_scene():
     assert decode_qr(scene) == [payload]
 
 
+@pytest.mark.parametrize("downscale", [1, 2, 4])
+def test_decode_reduced_compressed_frame(downscale):
+    """The node's JPEG path: decoded straight to smaller grey, the code is still read."""
+    from types import SimpleNamespace
+
+    from robot_mission_planner.qr_goal import _decode_image_msg
+
+    payload = "geo:50.1103476,14.4159857"
+    frame = np.full((1296, 1600, 3), 128, dtype=np.uint8)
+    frame[400:880, 600:1080] = _render_qr(payload, size=400)
+    msg = SimpleNamespace(data=cv2.imencode(".jpg", frame)[1].tobytes())
+    img = _decode_image_msg(msg, "compressed", downscale)
+    assert img.shape == (1296 // downscale, 1600 // downscale)
+    assert decode_qr(img) == [payload]
+
+
 def test_decode_blank_and_garbage_images():
     assert decode_qr(np.full((240, 320, 3), 255, dtype=np.uint8)) == []
     assert decode_qr(np.zeros((0, 0, 3), dtype=np.uint8)) == []

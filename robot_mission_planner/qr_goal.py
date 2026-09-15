@@ -66,35 +66,25 @@ def decode_qr(image) -> list[str]:
     return [text for text, _ in decode_qr_with_points(image)]
 
 
+_DETECTOR = cv2.QRCodeDetector() if cv2 is not None else None
+
+
 def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
-    """``[(payload, 4x2 corner points or None), ...]``; ``[]`` on any failure."""
-    if cv2 is None or image is None or getattr(image, "size", 0) == 0:
+    """
+    ``[(payload, 4x2 corner points or None)]``; ``[]`` on any failure.
+
+    One code per frame (a Robotour goal is a single code): ``detectAndDecodeMulti`` with a
+    single-code fallback searched every empty frame twice, doubling the CPU cost.
+    """
+    if _DETECTOR is None or image is None or getattr(image, "size", 0) == 0:
         return []
-    detector = cv2.QRCodeDetector()
-    out: list[tuple[str, np.ndarray | None]] = []
     try:
-        if hasattr(detector, "detectAndDecodeMulti"):
-            ok, texts, points, _ = detector.detectAndDecodeMulti(image)
-            if ok:
-                for i, text in enumerate(texts):
-                    if text:
-                        pts = (
-                            points[i]
-                            if points is not None and i < len(points)
-                            else None
-                        )
-                        out.append((text, pts))
-        if not out:
-            text, points, _ = detector.detectAndDecode(image)
-            if text:
-                out.append(
-                    (text, points[0] if points is not None and len(points) else None)
-                )
-    except cv2.error:
-        return []
+        text, points, _ = _DETECTOR.detectAndDecode(image)
     except Exception:  # noqa: BLE001 - a bad frame must never kill the node
         return []
-    return out
+    if not text:
+        return []
+    return [(text, points[0] if points is not None and len(points) else None)]
 
 
 class Debouncer:
@@ -137,11 +127,38 @@ class Debouncer:
 # ---------------------------------------------------------------------- ROS node
 
 
-def _decode_image_msg(msg, transport: str):
-    """sensor_msgs CompressedImage / Image -> BGR (or grey) numpy image, or None."""
+#: decode_downscale -> imdecode flag: libjpeg shrinks the frame while decoding, straight to
+#: grey (the detector works on grey anyway), so the full-size colour image is never built.
+_REDUCED_FLAGS = (
+    {
+        1: cv2.IMREAD_GRAYSCALE,
+        2: cv2.IMREAD_REDUCED_GRAYSCALE_2,
+        4: cv2.IMREAD_REDUCED_GRAYSCALE_4,
+        8: cv2.IMREAD_REDUCED_GRAYSCALE_8,
+    }
+    if cv2 is not None
+    else {}
+)
+
+
+def _decode_image_msg(msg, transport: str, downscale: int = 1):
+    """
+    sensor_msgs CompressedImage / Image -> numpy image ``downscale`` times smaller, or None.
+    Compressed frames come out grey, raw ones BGR (grey for mono and unknown bayer).
+    """
     if transport == "compressed":
         buf = np.frombuffer(bytes(msg.data), dtype=np.uint8)
-        return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        return cv2.imdecode(buf, _REDUCED_FLAGS[downscale])
+    img = _decode_raw_image(msg)
+    if img is not None and downscale > 1:
+        img = cv2.resize(
+            img, None, fx=1 / downscale, fy=1 / downscale, interpolation=cv2.INTER_AREA
+        )
+    return img
+
+
+def _decode_raw_image(msg):
+    """sensor_msgs Image -> BGR (or grey) numpy image, or None."""
     enc = msg.encoding.lower()
     h, w = int(msg.height), int(msg.width)
     data = np.frombuffer(bytes(msg.data), dtype=np.uint8)
@@ -177,6 +194,7 @@ def main(args=None):
     from geographic_msgs.msg import GeoPointStamped
     from rclpy.node import Node
     from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
+    from rclpy.serialization import deserialize_message
     from sensor_msgs.msg import CompressedImage, Image
     from std_msgs.msg import String
     from std_srvs.srv import SetBool
@@ -190,8 +208,11 @@ def main(args=None):
                 "image_transport", "compressed"
             ).value  # compressed | raw
             self.process_rate = float(
-                p("process_rate", 4.0).value
+                p("process_rate", 2.0).value
             )  # Hz, frames above are dropped
+            # 1|2|4|8: decode frames this many times smaller; the code must then span that many
+            # times more pixels to be read
+            self.decode_downscale = int(p("decode_downscale", 2).value)
             confirm_frames = int(p("confirm_frames", 2).value)
             republish_after = float(p("republish_after_s", 30.0).value)
             self.goal_topic = p("goal_topic", "/qr_goal/goal").value
@@ -206,6 +227,11 @@ def main(args=None):
                     f"image_transport must be compressed|raw, got '{self.transport}'; using compressed"
                 )
                 self.transport = "compressed"
+            if self.decode_downscale not in (1, 2, 4, 8):
+                self.get_logger().error(
+                    f"decode_downscale must be 1|2|4|8, got {self.decode_downscale}; using 1"
+                )
+                self.decode_downscale = 1
             if cv2 is None:
                 self.get_logger().error(
                     "OpenCV (python3-opencv) is missing: camera decoding disabled"
@@ -226,9 +252,18 @@ def main(args=None):
             # latched: qr_goal_send publishes once and exits before a volatile match would happen
             self.create_subscription(String, text_topic, self._text_cb, latched)
             self.create_service(SetBool, "~/enable", self._enable_cb)
-            msg_type = CompressedImage if self.transport == "compressed" else Image
+            # raw=True: frames arrive serialized and only the processed ones are deserialized;
+            # otherwise rclpy builds Python objects from every ~1 MB frame at the camera rate
+            # just for _image_cb to drop most of them
+            self._msg_type = (
+                CompressedImage if self.transport == "compressed" else Image
+            )
             self.create_subscription(
-                msg_type, self.image_topic, self._image_cb, qos_profile_sensor_data
+                self._msg_type,
+                self.image_topic,
+                self._image_cb,
+                qos_profile_sensor_data,
+                raw=True,
             )
 
             self.debouncer = Debouncer(confirm_frames, republish_after)
@@ -237,7 +272,8 @@ def main(args=None):
             self._frames = 0
             self.create_timer(30.0, self._heartbeat)
             self.get_logger().info(
-                f"qr_goal ready: {self.image_topic} ({self.transport}) at <= {self.process_rate:g} Hz, "
+                f"qr_goal ready: {self.image_topic} ({self.transport}, 1/{self.decode_downscale} size) "
+                f"at <= {self.process_rate:g} Hz, "
                 f"confirm {confirm_frames} frames, goals -> {self.goal_topic}, text on {text_topic}"
             )
 
@@ -254,7 +290,8 @@ def main(args=None):
                 return
             self._last_processed = now
             try:
-                image = _decode_image_msg(msg, self.transport)
+                msg = deserialize_message(msg, self._msg_type)
+                image = _decode_image_msg(msg, self.transport, self.decode_downscale)
             except Exception as e:  # noqa: BLE001
                 self.get_logger().warning(
                     f"cannot decode image: {e}", throttle_duration_sec=10.0
@@ -342,6 +379,10 @@ def main(args=None):
                     throttle_duration_sec=60.0,
                 )
 
+    if cv2 is not None:
+        # One core: OpenCV's thread pool gave no speed-up on these frames but cost ~35% more
+        # CPU, taken from the SLAM / segmentation nodes sharing the Jetson.
+        cv2.setNumThreads(1)
     rclpy.init(args=args)
     node = QrGoal()
     try:

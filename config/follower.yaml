@@ -101,6 +101,8 @@
 
     # Mission (QR goal -> plan -> wait -> follow -> arrive -> idle)
     qr_goal_topic: "/qr_goal/goal" # GeoPointStamped from qr_goal
+    # SetBool: pauses qr_goal's camera decoding while a leg runs, "" = leave it on
+    qr_detection_service: "/qr_goal/enable"
     plan_route_action: "/route_planner/plan_route"
     plan_spacing: 3.0 # m between route waypoints
     plan_retries: 3
