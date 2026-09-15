@@ -92,11 +92,13 @@
     # road centre build_map sees around the robot (translation only); unshifted at intersections
     road_map_topic: "/road_map_2" # build_map's road map in map_frame
     road_map_cost_field: "cost" # centerline cost / 255, 0 = road centre (rgb reads 0 there)
-    shift_radius: 2.5 # m around the robot
+    # Open-loop sweep on the 2026-09-14 bags: 2.5 m rarely holds enough centre cells and a
+    # 3 m clamp cuts the ~3.5 m offset of the moved-waypoint test; 6 m / 5 m fit almost always.
+    shift_radius: 6.0 # m around the robot
     shift_centre_cost_max: 0.086 # cost <= this is the centre (22/255, build_map centerline_value_max)
-    shift_min_points: 15 # fewer centre cells = no measurement (the shift fades out)
-    shift_max: 3.0 # m: longer shifts are clamped
-    shift_smoothing: 0.8 # 0 = raw, 0.8 = damped
+    shift_min_points: 8 # fewer centre cells = no measurement (the shift fades out)
+    shift_max: 5.0 # m: longer shifts are clamped
+    shift_smoothing: 0.5 # 0 = raw, 0.8 = damped
     shift_points_topic: "~/shift_centre_points" # Marker: the centre cells of the last fit
 
     # Mission (QR goal -> plan -> wait -> follow -> arrive -> idle)

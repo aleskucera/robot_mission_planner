@@ -18,7 +18,7 @@ One node does the driving. What it uses is the `mode` parameter:
 
 **`gps_shift`** drives GPS all the way; the segmentation only corrects it. Every
 `road_map_topic` message (`/road_map_2`, build_map's road grid in `map_frame`) is cropped to
-`shift_radius` (2.5 m) around the robot, the centre band (`cost` ≤ `shift_centre_cost_max`, 0.086 =
+`shift_radius` (6 m) around the robot, the centre band (`cost` ≤ `shift_centre_cost_max`, 0.086 =
 22/255, build_map's `centerline_value_max`) is kept, and the route polyline is translated —
 never rotated — onto those cells (`follower/route_shift.py`, `tests/test_route_shift.py`). On a
 straight road only the lateral component comes out, so the fit cannot slide the route along
