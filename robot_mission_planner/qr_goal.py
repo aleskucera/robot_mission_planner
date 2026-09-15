@@ -147,7 +147,7 @@ def _decode_image_msg(msg, transport: str, downscale: int = 1):
     Compressed frames come out grey, raw ones BGR (grey for mono and unknown bayer).
     """
     if transport == "compressed":
-        buf = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+        buf = np.frombuffer(msg.data, dtype=np.uint8)
         return cv2.imdecode(buf, _REDUCED_FLAGS[downscale])
     img = _decode_raw_image(msg)
     if img is not None and downscale > 1:
@@ -161,7 +161,7 @@ def _decode_raw_image(msg):
     """sensor_msgs Image -> BGR (or grey) numpy image, or None."""
     enc = msg.encoding.lower()
     h, w = int(msg.height), int(msg.width)
-    data = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+    data = np.frombuffer(msg.data, dtype=np.uint8)
     if enc in ("bgr8", "rgb8"):
         img = data.reshape(h, msg.step)[:, : w * 3].reshape(h, w, 3)
         return img if enc == "bgr8" else cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -220,7 +220,7 @@ def main(args=None):
             text_topic = p("text_topic", "~/text").value
             detections_topic = p("detections_topic", "~/detections").value
             self.publish_annotated = bool(p("publish_annotated", False).value)
-            self.enabled = bool(p("enabled", True).value)
+            enabled = bool(p("enabled", True).value)
 
             if self.transport not in ("compressed", "raw"):
                 self.get_logger().error(
@@ -252,24 +252,17 @@ def main(args=None):
             # latched: qr_goal_send publishes once and exits before a volatile match would happen
             self.create_subscription(String, text_topic, self._text_cb, latched)
             self.create_service(SetBool, "~/enable", self._enable_cb)
-            # raw=True: frames arrive serialized and only the processed ones are deserialized;
-            # otherwise rclpy builds Python objects from every ~1 MB frame at the camera rate
-            # just for _image_cb to drop most of them
             self._msg_type = (
                 CompressedImage if self.transport == "compressed" else Image
             )
-            self.create_subscription(
-                self._msg_type,
-                self.image_topic,
-                self._image_cb,
-                qos_profile_sensor_data,
-                raw=True,
-            )
+            self._image_qos = qos_profile_sensor_data
+            self._image_sub = None  # only while enabled, see _set_enabled
 
             self.debouncer = Debouncer(confirm_frames, republish_after)
             self._last_processed = 0.0
             self._warned_payloads: set[str] = set()
             self._frames = 0
+            self._set_enabled(enabled)
             self.create_timer(30.0, self._heartbeat)
             self.get_logger().info(
                 f"qr_goal ready: {self.image_topic} ({self.transport}, 1/{self.decode_downscale} size) "
@@ -278,6 +271,29 @@ def main(args=None):
             )
 
         # -------------------------------------------------------------- inputs
+        def _set_enabled(self, enabled: bool):
+            """
+            Turn detection on/off, subscription included.
+
+            The single place ``self.enabled`` is written: a subscription left in place while
+            disabled still has every ~1 MB frame copied into this process just to be dropped.
+            raw=True: frames arrive serialized and only the processed ones are deserialized;
+            otherwise rclpy builds Python objects from every frame at the camera rate.
+            """
+            self.enabled = bool(enabled)
+            if self.enabled and self._image_sub is None:
+                self._image_sub = self.create_subscription(
+                    self._msg_type,
+                    self.image_topic,
+                    self._image_cb,
+                    self._image_qos,
+                    raw=True,
+                )
+            elif not self.enabled and self._image_sub is not None:
+                self.destroy_subscription(self._image_sub)
+                self._image_sub = None
+                self.debouncer.reset()
+
         def _image_cb(self, msg):
             self._frames += 1
             if not self.enabled or cv2 is None:
@@ -316,9 +332,7 @@ def main(args=None):
             self._handle_payload(msg.data, "text")
 
         def _enable_cb(self, req, res):
-            self.enabled = bool(req.data)
-            if not self.enabled:
-                self.debouncer.reset()
+            self._set_enabled(req.data)
             res.success = True
             res.message = "qr_goal detection " + (
                 "enabled" if self.enabled else "disabled"
@@ -373,7 +387,8 @@ def main(args=None):
             self.pub_annotated.publish(out)
 
         def _heartbeat(self):
-            if self._frames == 0:
+            # Disabled = no subscription, so no frames are expected either.
+            if self.enabled and self._frames == 0:
                 self.get_logger().warning(
                     f"no images received on {self.image_topic} yet",
                     throttle_duration_sec=60.0,
