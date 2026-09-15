@@ -74,12 +74,14 @@
     carrot_type: "marker" # marker | path
     road_goal_min_ahead: 4.0 # m: never send a closer goal
     road_goal_max_ahead: 12.0 # m: farther = projection artefact
-    road_goal_smoothing: 0.0 # carrot: 0 = raw, 0.8 = damped
+    road_goal_smoothing: 0.8 # carrot: 0 = raw, 0.8 = damped
     road_goal_reached_distance: 2.5 # m: forget the active road goal
 
     # Project robot/carrot onto route and add stretch distance along it, carrying over offset
     route_stretch_distance: 2.0 # m along the route past the robot/carrot projection
-    route_lateral_gain: 1.0 # how much of the carrot's offset is carried over
+    # The hull-centre carrot follows the robot's heading more than the road centre, so
+    # carrying all of its offset turns heading error into goal offset (2026-09-14 bags).
+    route_lateral_gain: 0.3 # how much of the carrot's offset is carried over
     route_stretch_max_turn: 45.0 # deg: do not stretch past a sharper corner (0 = off)
     route_projection_window: 10 # waypoints searched around the current index (0 = all)
     # true = drive blindly along route offset when no carrot arrives

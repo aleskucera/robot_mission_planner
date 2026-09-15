@@ -5,6 +5,7 @@
     file: ""
     # No route to measure against; fall back to plain carrot
     road_goal_source: "carrot"
+    road_goal_smoothing: 0.0 # the route mode's 0.8 would lag the plain carrot
     road_goal_max_route_offset: 0.0
     # Disable fallbacks and final approach (no route)
     road_path_timeout: 0.0

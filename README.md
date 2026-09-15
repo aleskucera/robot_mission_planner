@@ -176,8 +176,7 @@ Replay `/tf`, `/lookahead_pose` and `/fixposition/odometry_llh` from a Helhest b
 `map_data osm_cloud.launch.py` (geodetic mode) and this node with a stand-in commander that
 serves the two services and republishes `/lookahead_pose` as `/predicted_path_ls`. Note that
 rosbag2 does not reliably replay `/tf_static` to late subscribers — broadcast the bag's static
-transforms separately. `demo/run_bag_test.sh` in the workspace does all of this; `RVIZ=1`
-adds the operator view below and the camera / segmentation / status topics it needs.
+transforms separately.
 
 ## QR goal input
 
@@ -297,9 +296,3 @@ python3 rviz/make_layout.py --write robotour.rviz
 ```bash
 PYTHONPATH=. python -m pytest tests   # pure-geometry tests, no ROS needed
 ```
-
-Inside the container (`runros`), with the workspace sourced, the same command also runs the
-scripted state-machine scenarios (`tests/test_follower_sm.py`, one per mode among them)
-against `demo/fake_commander.py`; `demo/run_sm_test.sh` is the shortcut. `demo/run_bag_test.sh`
-replays a field bag through the whole pipeline and `demo/diff_probe.py` compares the result
-with a recorded baseline, which is what a refactor of the follower has to leave unchanged.
