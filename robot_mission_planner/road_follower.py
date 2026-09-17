@@ -11,7 +11,7 @@ gps      : follow the route's waypoints from beginning to end, never look at the
 road     : follow the road only -- no route, no intersections, no goal to arrive at.
 gps_shift: follow the route's waypoints one at a time as goto goals, each moved by the offset
            between the route and the road centre in ``road_map_topic`` around the robot
-           (``follower/route_shift.py``); pure GPS near OSM intersections.
+           (``follower/route_shift.py``).
 
 The route of the two route modes is either a GPX/YAML file (``file``) or planned by
 route_planner from a mission goal (a QR code); that is a separate choice, not a mode.
@@ -538,7 +538,6 @@ class RoadFollower(Node):
         self._goal_active = False
         self._last_road_goal = None  # (x, y) in map_frame of the active ROAD goal
         self._shift = None  # gps_shift: smoothed (dx, dy) route -> road centre, map_frame
-        self._shift_blocked = False  # gps_shift: near an intersection, pure GPS
         self._pending_goal_timer = None
         self._gps_start_index = 0
         self.route.synced = False  # first sync searches the whole list
@@ -581,7 +580,7 @@ class RoadFollower(Node):
                 self.create_subscription(
                     carrot_msg, gp("carrot_topic"), self._carrot_callback, 10
                 )
-        if self.mode.switching or self.mode.shift:
+        if self.mode.switching:
             self.create_subscription(
                 PoseArray,
                 gp("intersections_topic"),
@@ -1896,15 +1895,13 @@ class RoadFollower(Node):
 
     def _road_map_callback(self, msg):
         """
-        gps_shift: fit the route shift on build_map's road map. Nothing is measured near an
-        intersection (the junction's other road would pull the fit sideways). No fit counts as
-        a zero measurement, so a shift that loses its road fades out instead of sticking.
+        gps_shift: fit the route shift on build_map's road map. No fit counts as a zero
+        measurement, so a shift that loses its road fades out instead of sticking. A
+        junction's other road biases the fit by ~1 m (2 m when the route turns there),
+        which the smoothing spreads out; blocking the fit there jumped the goal by the whole
+        shift at the ring edge instead.
         """
-        if (
-            self.state != self.STATE_GPS
-            or self._shift_blocked
-            or len(self.route.polyline) < 2
-        ):
+        if self.state != self.STATE_GPS or len(self.route.polyline) < 2:
             return
         pose = self._robot_pose()
         if pose is None:
@@ -1955,28 +1952,6 @@ class RoadFollower(Node):
             marker.points.append(Point(x=float(x), y=float(y), z=0.0))
         self._shift_points_pub.publish(marker)
 
-    def _update_shift_block(self, rob_xy):
-        """
-        gps_shift: within ``intersection_enter_threshold`` of an intersection on the route the
-        waypoints go out unshifted; farther than ``intersection_exit_threshold`` from every
-        intersection the shift is measured again, from zero.
-        """
-        closest, closest_xy = self._closest_intersection(rob_xy)
-        if not self._shift_blocked and closest < self.enter_threshold:
-            self.get_logger().info(
-                f"Intersection {closest:.1f} m away: pure GPS, route shift reset."
-            )
-            self._shift_blocked, self._shift = True, None
-            self._active_intersection = closest_xy
-            self._gps_reason = GPS_REASON_INTERSECTION
-        elif self._shift_blocked and closest > self.exit_threshold:
-            self.get_logger().info(
-                f"Intersection left ({closest:.1f} m): measuring the route shift again."
-            )
-            self._shift_blocked, self._shift = False, None
-            self._active_intersection = None
-            self._gps_reason = GPS_REASON_ROUTE
-
     def _send_shift_goal(self):
         """
         gps_shift: drive to the first route waypoint whose shifted position is at least
@@ -1990,7 +1965,6 @@ class RoadFollower(Node):
         if pose is None:
             return
         rob_xy = pose[:2]
-        self._update_shift_block(rob_xy)
         wps = self.waypoints_map
         placed = [
             i for i in range(self.current_waypoint_index, len(wps)) if wps[i] is not None

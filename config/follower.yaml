@@ -90,7 +90,7 @@
     route_goal_without_carrot: false
 
     # Route shift (mode gps_shift): each waypoint moved by the offset between the route and the
-    # road centre build_map sees around the robot (translation only); unshifted at intersections
+    # road centre build_map sees around the robot (translation only)
     road_map_topic: "/road_map_2" # build_map's road map in map_frame
     road_map_cost_field: "cost" # centerline cost / 255, 0 = road centre (rgb reads 0 there)
     # Open-loop sweep on the 2026-09-14 bags: 2.5 m rarely holds enough centre cells and a

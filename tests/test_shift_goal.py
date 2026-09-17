@@ -27,7 +27,6 @@ def test_next_goal_is_sent_at_the_shifted_waypoint():
         _shift=(0.0, 3.0),  # road 3 m left of the route
         _goal_active=True,
         _last_road_goal=(5.0, 3.0),
-        _update_shift_block=lambda xy: None,
         backend=SimpleNamespace(
             left_us=lambda active: False, send_pose=lambda x, y, yaw: sent.append((x, y))
         ),

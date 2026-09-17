@@ -14,7 +14,7 @@ One node does the driving. What it uses is the `mode` parameter:
 | `road_gps` (default) | the detected road, with the route's waypoints at intersections, when the road is lost, when the commander is stuck and for the final approach | needed | yes |
 | `gps` | the route's waypoints, from beginning to end | needed | — |
 | `road` | the detected road only, with no goal to arrive at | none | — |
-| `gps_shift` | the route's waypoints one at a time, each moved onto the road segmented around the robot | needed | pure GPS there |
+| `gps_shift` | the route's waypoints one at a time, each moved onto the road segmented around the robot | needed | — |
 
 **`gps_shift`** drives GPS all the way; the segmentation only corrects it. Every
 `road_map_topic` message (`/road_map_2`, build_map's road grid in `map_frame`) is cropped to
@@ -25,10 +25,10 @@ straight road only the lateral component comes out, so the fit cannot slide the 
 the road. The shift is clamped to `shift_max`, smoothed with `shift_smoothing`, and a map
 without `shift_min_points` centre cells counts as zero, so a stale shift fades out. The goal
 is the first waypoint at least `road_goal_min_ahead` ahead plus the shift, sent as a `goto`
-and re-sent when it moves more than `road_goal_update_distance`. Within
-`intersection_enter_threshold` of an intersection on the route the waypoints go out unshifted
-(`GPS:intersection`); beyond `intersection_exit_threshold` the shift is measured again from
-zero (`GPS:route`). The fitted cells are on `~/shift_centre_points`.
+and re-sent when it moves more than `road_goal_update_distance`. Intersections play no part:
+a junction's other road biases the fit by about 1 m (2 m where the route turns), which is
+less than the goal jump the earlier unshifted ring caused. The fitted cells are on
+`~/shift_centre_points`.
 
 The route of the two route modes is a GPX/YAML file (`file`, the `gps_file` launch
 argument) or is planned by `route_planner` from a QR goal — that is a separate choice, not a

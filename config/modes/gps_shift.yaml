@@ -1,5 +1,5 @@
 # mode: gps_shift -- the route's waypoints one at a time, each moved onto the road centre seen
-# in road_map_2 (translation only); pure GPS around intersections.
+# in road_map_2 (translation only).
 /**:
   ros__parameters:
     mode: "gps_shift"
