@@ -459,10 +459,12 @@ class RoadFollower(Node):
         self.backend.on_goal_inactive = self._backend_goal_inactive
         self.backend.on_waypoint_reached = self._backend_waypoint_reached
         if self.mode.route and not self.backend.supports_sequence:
+            # waypoint_msg() would raise inside the TF timer later and take the node down.
             self.get_logger().error(
                 f"nav_backend '{self.nav_backend}' cannot drive a waypoint sequence, which "
-                f"mode {self.mode.name} needs: use mode road, or another backend."
+                f"mode {self.mode.name} needs: driving mode road instead."
             )
+            self.mode = modes.ROAD
         if not self.mode.route and self.road_goal_source == "route":
             self.get_logger().warning(
                 f"road_goal_source 'route' needs a planned route, which mode {self.mode.name} "
@@ -679,7 +681,7 @@ class RoadFollower(Node):
                 f"{self.number_waypoints} waypoints placed in {self.map_frame}"
             )
             # Switch from the 1 s acquisition timer to the (slower) re-check.
-            self._utm_timer.cancel()
+            self.destroy_timer(self._utm_timer)
             if self.waypoint_tf_recheck_period > 0:
                 self._utm_timer = self.create_timer(
                     self.waypoint_tf_recheck_period, self._resolve_waypoint_transform
@@ -1454,9 +1456,7 @@ class RoadFollower(Node):
         if self.transition_delay > 0.0:
             self._schedule_goal(delay_sec=self.transition_delay, mode=mode)
             return
-        if self._pending_goal_timer:
-            self._pending_goal_timer.cancel()
-            self._pending_goal_timer = None
+        self._cancel_pending_goal_timer()
         if mode == "GPS":
             self._send_gps_goal()
         else:
@@ -1464,9 +1464,25 @@ class RoadFollower(Node):
 
     # ------------------------------------------------------------------ mission
     def _cancel_plan_timer(self):
+        # destroy, not cancel: a cancelled rclpy timer stays in the node's wait set forever
         if self._plan_timer is not None:
-            self._plan_timer.cancel()
+            self.destroy_timer(self._plan_timer)
             self._plan_timer = None
+
+    def _cancel_pending_goal_timer(self):
+        if self._pending_goal_timer is not None:
+            self.destroy_timer(self._pending_goal_timer)
+            self._pending_goal_timer = None
+
+    def _cancel_plan_goal(self):
+        """Cancel a PlanRoute goal in flight, so a late answer cannot start a leg."""
+        handle, self._plan_goal_handle = self._plan_goal_handle, None
+        if handle is None:
+            return
+        try:
+            handle.cancel_goal_async()
+        except Exception as e:  # noqa: BLE001 - the caller must never fail on this
+            self.get_logger().warning(f"Could not cancel the PlanRoute goal: {e}")
 
     def _one_shot(self, delay_sec, cb):
         """Replace the pending mission timer with a one-shot ``cb`` after ``delay_sec``."""
@@ -1606,24 +1622,37 @@ class RoadFollower(Node):
             f"{end.latitude:.7f}, {end.longitude:.7f}"
         )
         self._event("PLANNING")
+        # Both callbacks carry the attempt number: after a timeout the retry is a new
+        # attempt, and the old one's late answers must not start (or fail) the leg.
+        attempt = self._plan_attempt
         future = self._plan_client.send_goal_async(goal)
-        future.add_done_callback(self._plan_response_cb)
+        future.add_done_callback(lambda f: self._plan_response_cb(f, attempt))
         self._one_shot(self.plan_timeout, lambda: self._plan_failed("timeout"))
 
-    def _plan_response_cb(self, future):
+    def _plan_stale(self, attempt: int) -> bool:
+        return self.state != self.STATE_PLANNING or attempt != self._plan_attempt
+
+    def _plan_response_cb(self, future, attempt: int):
         try:
             handle = future.result()
         except Exception as e:  # noqa: BLE001
-            self._plan_failed(f"send failed: {e}")
+            if not self._plan_stale(attempt):
+                self._plan_failed(f"send failed: {e}")
+            return
+        if self._plan_stale(attempt):
+            if handle.accepted:
+                handle.cancel_goal_async()
             return
         if not handle.accepted:
             self._plan_failed("rejected")
             return
         self._plan_goal_handle = handle
-        handle.get_result_async().add_done_callback(self._plan_result_cb)
+        handle.get_result_async().add_done_callback(
+            lambda f: self._plan_result_cb(f, attempt)
+        )
 
-    def _plan_result_cb(self, future):
-        if self.state != self.STATE_PLANNING:
+    def _plan_result_cb(self, future, attempt: int):
+        if self._plan_stale(attempt):
             return
         try:
             result = future.result().result
@@ -1666,7 +1695,7 @@ class RoadFollower(Node):
         if self.state != self.STATE_PLANNING:
             return
         self._cancel_plan_timer()
-        self._plan_goal_handle = None
+        self._cancel_plan_goal()  # a timed-out attempt may still be planning
         final = reason in self.plan_no_retry_reasons
         if final:
             self.get_logger().warning(
@@ -1708,9 +1737,7 @@ class RoadFollower(Node):
         self._qr_detection_wanted = True  # the next code shown is the continue signal (R1)
         self._arrived_time = self._now()
         self._cancel_plan_timer()
-        if self._pending_goal_timer:
-            self._pending_goal_timer.cancel()
-            self._pending_goal_timer = None
+        self._cancel_pending_goal_timer()
         self._cancel_current_goal()
         self._gps_reason = None
         self._active_intersection = None
@@ -1727,16 +1754,9 @@ class RoadFollower(Node):
         left = self._state_text()
         self.get_logger().warning(f"Abort requested while {left}")
         self._cancel_plan_timer()
-        if self._pending_goal_timer:
-            self._pending_goal_timer.cancel()
-            self._pending_goal_timer = None
+        self._cancel_pending_goal_timer()
         self._cancel_current_goal()
-        if self._plan_goal_handle is not None:
-            try:
-                self._plan_goal_handle.cancel_goal_async()
-            except Exception as e:  # noqa: BLE001 - the abort must never fail on this
-                self.get_logger().warning(f"Could not cancel the PlanRoute goal: {e}")
-            self._plan_goal_handle = None
+        self._cancel_plan_goal()
         self._pending_goal = None  # an abort must not start the buffered leg either
         self._event(f"ABORT:{left}")
         self._enter_idle("aborted by operator")
@@ -1781,8 +1801,7 @@ class RoadFollower(Node):
 
     # ------------------------------------------------------------------ goal dispatch
     def _schedule_goal(self, delay_sec, mode):
-        if self._pending_goal_timer:
-            self._pending_goal_timer.cancel()
+        self._cancel_pending_goal_timer()
         cb = (
             self._send_gps_goal_timer_cb
             if mode == "GPS"
@@ -1791,13 +1810,11 @@ class RoadFollower(Node):
         self._pending_goal_timer = self.create_timer(delay_sec, cb)
 
     def _send_road_goal_timer_cb(self):
-        self._pending_goal_timer.cancel()
-        self._pending_goal_timer = None
+        self._cancel_pending_goal_timer()
         self._send_road_goal()
 
     def _send_gps_goal_timer_cb(self):
-        self._pending_goal_timer.cancel()
-        self._pending_goal_timer = None
+        self._cancel_pending_goal_timer()
         self._send_gps_goal()
 
     def _cancel_current_goal(self):

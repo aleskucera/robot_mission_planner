@@ -89,7 +89,7 @@ from the start.
   lags the robot and the plain `carrot` goal degenerates into "`road_goal_min_ahead` metres
   along the current heading": it cannot anticipate a bend, and on one it lands off the path and
   is rejected as off-route. In `route` mode the robot **and** the carrot are projected onto the
-  planned route, the goal is placed `route_stretch_distance` (6 m) further along the route from
+  planned route, the goal is placed `route_stretch_distance` (2 m) further along the route from
   whichever of the two projects farther ahead, and the carrot's own lateral offset from the
   route is carried over to it (`route_lateral_gain`, clamped by the `road_goal_max_route_offset`
   limits, which are relative to the robot's own offset). The map thus supplies only the *shape*

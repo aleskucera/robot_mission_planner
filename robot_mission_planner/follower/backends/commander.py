@@ -190,7 +190,7 @@ class CommanderBackend(Backend):
             return
 
         def check():
-            timer.cancel()
+            self.node.destroy_timer(timer)  # cancel() alone leaves it in the wait set
             self._watchdogs = [t for t in self._watchdogs if t is not timer]
             if not future.done():
                 self.log.error(

@@ -80,7 +80,10 @@
     road_goal_reached_distance: 2.5 # m: forget the active road goal
 
     # Project robot/carrot onto route and add stretch distance along it, carrying over offset
-    route_stretch_distance: 2.0 # m along the route past the robot/carrot projection
+    # m along the route past the robot/carrot projection, whichever is farther ahead. The
+    # goal is still pushed out to road_goal_min_ahead, so with no carrot ahead of the robot
+    # any stretch below that gives the same goal.
+    route_stretch_distance: 2.0
     # The hull-centre carrot follows the robot's heading more than the road centre, so
     # carrying all of its offset turns heading error into goal offset (2026-09-14 bags).
     route_lateral_gain: 0.3 # how much of the carrot's offset is carried over
