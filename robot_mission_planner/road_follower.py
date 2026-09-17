@@ -1351,7 +1351,9 @@ class RoadFollower(Node):
             # The next intersection is inside the active one's exit ring (rings average 16 m
             # apart, 31 pairs under 6 m in Stromovka): adopt it if it lies farther along the
             # route, instead of leaving and re-entering GPS mode.
-            next_index = self.route.nearest(closest_xy) if self.waypoints_map else None
+            next_index = (
+                self._route_index_near(closest_xy) if self.waypoints_map else None
+            )
             if (
                 self._gps_node_index is None
                 or next_index is None
@@ -1427,11 +1429,21 @@ class RoadFollower(Node):
         a sharper one, keeping the follower in GPS mode for the rest of the leg.
         """
         if intersection_xy is not None and self.waypoints_map:
-            self._gps_node_index = self.route.nearest(intersection_xy)
+            self._gps_node_index = self._route_index_near(intersection_xy)
             self._gps_route_dir = self.route.direction_at(self._gps_node_index)
         else:
             self._gps_node_index = None
             self._gps_route_dir = self.route.direction_at(self.current_waypoint_index)
+
+    def _route_index_near(self, xy) -> int:
+        """
+        The route waypoint an intersection sits at, searched within ``route_projection_window``
+        of the current index like the road goal: an out-and-back leg passes the same junction
+        twice, and the node must tie to the pass being driven or the exit test never passes.
+        """
+        return self.route.nearest(
+            xy, self.current_waypoint_index, self.route_projection_window
+        )
 
     def _enter_road(self, why):
         self.get_logger().info(f"{why}. Switching back to ROAD mode.")

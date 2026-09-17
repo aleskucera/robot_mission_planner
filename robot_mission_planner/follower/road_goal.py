@@ -359,10 +359,20 @@ def latlon_distance(a: Point, b: Point) -> float:
     return math.hypot(lat_m, lon_m)
 
 
-def nearest_index(points_xy: list[Point | None], xy: Point) -> int:
-    """Index of the point closest to ``xy`` (``None`` entries skipped; 0 if none)."""
-    best, best_d = 0, float("inf")
-    for i, p in enumerate(points_xy):
+def nearest_index(
+    points_xy: list[Point | None], xy: Point, index: int = 0, window: int = 0
+) -> int:
+    """
+    Index of the point closest to ``xy`` (``None`` entries skipped). Only points within
+    ``window`` of ``index`` are searched (``window <= 0`` = all), so on a route that comes
+    back past the same junction the node ties to the pass being driven; with no usable
+    point that is ``index`` itself, or 0 unwindowed.
+    """
+    count = len(points_xy)
+    best = max(0, min(index, count - 1)) if window > 0 else 0
+    best_d = float("inf")
+    for i in _segment_range(count, index, window):
+        p = points_xy[i]
         if p is None:
             continue
         d = _dist(p, xy)

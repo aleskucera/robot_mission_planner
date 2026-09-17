@@ -111,6 +111,19 @@ def test_nearest_index_skips_missing_points():
     assert nearest_index([None, None], (0.0, 0.0)) == 0
 
 
+def test_nearest_index_window_keeps_the_pass_being_driven():
+    # Out along y=0, back along y=1: the junction at (10, 0.9) is nearer the return pass.
+    out = [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0), (15.0, 0.0)]
+    back = [(15.0, 1.0), (10.0, 1.0), (5.0, 1.0), (0.0, 1.0)]
+    pts = out + back
+    node = (10.0, 0.9)
+    assert nearest_index(pts, node) == 5  # unwindowed: the return pass
+    assert nearest_index(pts, node, index=1, window=2) == 2  # outbound, driving index 1
+    assert nearest_index(pts, node, index=6, window=2) == 5  # return, driving index 6
+    assert nearest_index(pts, node, index=1, window=0) == 5  # 0 = all, as before
+    assert nearest_index([None] * 4, node, index=2, window=1) == 2  # nothing placed
+
+
 def test_passed_along_right_angle_junction():
     # Route comes from the west, turns north at the node (0, 0). The outgoing direction is
     # north; a robot 3 m north of the node has passed it, 3 m west or east of it has not.

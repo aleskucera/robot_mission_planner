@@ -163,9 +163,9 @@ class Route:
         norm = np.linalg.norm(d)
         return d / norm if norm > 1e-6 else None
 
-    def nearest(self, xy) -> int:
-        """Index of the waypoint closest to ``xy``."""
-        return nearest_index(self.map_xy, xy)
+    def nearest(self, xy, around: int = 0, window: int = 0) -> int:
+        """Index of the waypoint closest to ``xy``, within ``window`` of ``around`` (0 = all)."""
+        return nearest_index(self.map_xy, xy, around, window)
 
     def remaining_length(self, rob_xy) -> float:
         """Route length (m) still ahead: robot -> waypoint ``index`` -> ... -> last."""
