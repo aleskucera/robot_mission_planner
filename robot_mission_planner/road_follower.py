@@ -1147,7 +1147,9 @@ class RoadFollower(Node):
         if pose is None:
             return
         rob_xy = pose[:2]
-        if self._mission_goal is not None and is_arrived(
+        # Mission and file routes both end at their last waypoint; a looping file route
+        # passes it on every lap and must keep driving.
+        if not self.loop and is_arrived(
             rob_xy,
             self.waypoints_map,
             self.current_waypoint_index,

@@ -66,8 +66,9 @@ own fix as *home* (the service area): latched on `~/home` and written to `missio
 (`~/missions/home_<date>.txt` and `home.txt`), which `qr_goal_send --home` sends back as the
 return goal. `~/abort` (`std_srvs/Trigger`) gives up the current leg from any state
 — commander STOP, pending timers and a PlanRoute goal in flight cancelled, back to IDLE —
-without the 5-point e-stop penalty. A `gps_file` bypasses all of this and follows the file
-from the start.
+without the 5-point e-stop penalty. A `gps_file` bypasses the planning and follows the file
+from the start, but ends the same way: ARRIVED at its last waypoint, then IDLE (unless it
+`loop`s).
 
 * **ROAD** state: a goal on the visually detected road is sent to the commander (`goto`),
   re-sent only when it moved more than `road_goal_update_distance` or the previous goal was

@@ -44,7 +44,7 @@
 
     # Route file (GPX/YAML). Empty = mission mode (wait for QR goals). Ignored in road mode.
     file: ""
-    start: 0 # start index of the waypoints
+    start: 0 # start index of the waypoints (within goal_reached_radius of the end = arrived at once)
     reverse: false
     loop: false # file routes only; mission routes never loop
 
