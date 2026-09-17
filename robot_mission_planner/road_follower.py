@@ -1175,13 +1175,14 @@ class RoadFollower(Node):
             else:
                 self._send_road_goal()
         elif (
-            not self.mode.switching
-            and self.state == self.STATE_GPS
+            self.state == self.STATE_GPS
+            and self._pending_goal_timer is None  # a hand-over pause is still running
             and (self.mode.shift or not self._goal_active)
         ):
-            # Nothing hands over to this state and back in the route-only modes, so the tick
-            # is what starts the first sequence and picks it up again after a backend stop;
-            # gps_shift re-places its single goal every tick.
+            # The tick starts the first sequence and picks it up again whenever the backend
+            # dropped it (nav2 aborts, a STOP the commander's left_us cannot see), in every
+            # mode: inside an intersection ring nothing else would, and the exit test needs
+            # the robot to move. gps_shift re-places its single goal every tick.
             self._send_gps_goal()
         elif self.backend.left_us(self._goal_active):
             if self.state == self.STATE_GPS:
