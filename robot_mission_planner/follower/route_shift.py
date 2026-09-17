@@ -24,7 +24,9 @@ def centre_points(xy, cost, robot_xy, radius: float, max_cost: float) -> np.ndar
     return xy[near & (np.asarray(cost).reshape(-1) <= max_cost)]
 
 
-def _closest_on_segments(points: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+def _closest_on_segments(
+    points: np.ndarray, a: np.ndarray, b: np.ndarray
+) -> np.ndarray:
     """(N, S, 2): the closest point of every segment ``a[s]`` -> ``b[s]`` to every point."""
     ab = b - a
     t = np.einsum("nsk,sk->ns", points[:, None, :] - a[None], ab)

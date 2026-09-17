@@ -807,7 +807,13 @@ class RoadFollower(Node):
         self._route_source_pub.publish(String(data=self.route.source))
 
     def _waypoint_distance(self, idx, rob_xy):
-        """Distance (m) from the robot to waypoint ``idx`` (inf if unknown)."""
+        """
+        Distance (m) from the robot to waypoint ``idx`` (inf if unknown). gps_shift: to the
+        shifted waypoint, the goal actually driven to, so it counts as reached (and the next
+        goal goes out) without waiting for the commander to stop at it.
+        """
+        if self.mode.shift and self._shift is not None:
+            rob_xy = (rob_xy[0] - self._shift[0], rob_xy[1] - self._shift[1])
         d = self.route.distance_to(idx, rob_xy)
         if math.isfinite(d):
             return d
@@ -1973,7 +1979,8 @@ class RoadFollower(Node):
 
     def _send_shift_goal(self):
         """
-        gps_shift: drive to the first route waypoint at least ``road_goal_min_ahead`` away
+        gps_shift: drive to the first route waypoint whose shifted position is at least
+        ``road_goal_min_ahead`` away
         (nearer ones are inside the commander's arrival box), moved by the route shift. One
         waypoint at a time as a goto, so each takes the shift measured when its turn comes;
         re-sent when the shifted goal moves more than ``road_goal_update_distance`` or the
@@ -1994,7 +2001,7 @@ class RoadFollower(Node):
             (
                 i
                 for i in placed
-                if self.route.distance_to(i, rob_xy) >= self.road_goal_min_ahead
+                if self._waypoint_distance(i, rob_xy) >= self.road_goal_min_ahead
             ),
             placed[-1],
         )
