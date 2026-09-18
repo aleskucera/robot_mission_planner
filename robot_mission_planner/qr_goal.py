@@ -13,6 +13,10 @@ A payload is *confirmed* when it was decoded in ``confirm_frames`` consecutive p
 frames, and each distinct payload is published once (again only after ``republish_after_s``),
 so a code held in front of the camera does not spam goals.
 
+Every goal published also asks naex (the ``grid_planner`` node) to drop its accumulated
+planning map on ``clear_map_service``, so the new leg is planned on what the robot can see
+now rather than on obstacles it drove past on the way to the previous goal.
+
 Ported from vras-robotour/osm2qr ``qr2geo.py`` (pyzbar + nav2 FollowGPSWaypoints) to
 OpenCV's ``QRCodeDetector`` and the Helhest route_planner interface.
 """
@@ -192,6 +196,7 @@ def _decode_raw_image(msg):
 def main(args=None):
     import rclpy
     from geographic_msgs.msg import GeoPointStamped
+    from nav2_msgs.srv import ClearEntireCostmap
     from rclpy.node import Node
     from rclpy.qos import QoSDurabilityPolicy, QoSProfile, qos_profile_sensor_data
     from rclpy.serialization import deserialize_message
@@ -221,6 +226,10 @@ def main(args=None):
             detections_topic = p("detections_topic", "~/detections").value
             self.publish_annotated = bool(p("publish_annotated", False).value)
             enabled = bool(p("enabled", True).value)
+            # naex grid_planner map clearing, called with every goal; "" = leave the map alone
+            self.clear_map_service = p(
+                "clear_map_service", "/clear_distant_plan_map"
+            ).value
 
             if self.transport not in ("compressed", "raw"):
                 self.get_logger().error(
@@ -252,6 +261,11 @@ def main(args=None):
             # latched: qr_goal_send publishes once and exits before a volatile match would happen
             self.create_subscription(String, text_topic, self._text_cb, latched)
             self.create_service(SetBool, "~/enable", self._enable_cb)
+            self._clear_map_client = (
+                self.create_client(ClearEntireCostmap, self.clear_map_service)
+                if self.clear_map_service
+                else None
+            )
             self._msg_type = (
                 CompressedImage if self.transport == "compressed" else Image
             )
@@ -267,7 +281,8 @@ def main(args=None):
             self.get_logger().info(
                 f"qr_goal ready: {self.image_topic} ({self.transport}, 1/{self.decode_downscale} size) "
                 f"at <= {self.process_rate:g} Hz, "
-                f"confirm {confirm_frames} frames, goals -> {self.goal_topic}, text on {text_topic}"
+                f"confirm {confirm_frames} frames, goals -> {self.goal_topic}, text on {text_topic}, "
+                f"map clearing: {self.clear_map_service or 'off'}"
             )
 
         # -------------------------------------------------------------- inputs
@@ -356,9 +371,34 @@ def main(args=None):
             msg.header.frame_id = self.goal_frame_id
             msg.position.latitude = lat
             msg.position.longitude = lon
+            self._clear_map()
             self.pub_goal.publish(msg)
             self.get_logger().info(
                 f"GOAL from {source}: {payload!r} -> {lat:.7f}, {lon:.7f} on {self.goal_topic}"
+            )
+
+        def _clear_map(self):
+            """
+            Ask naex to drop its planning map, best effort and without waiting for the result.
+
+            The map grown on the way to the previous goal still holds the obstacles the robot
+            has already driven past, so the route to a new goal would be planned around them.
+            A missing service is only worth a warning: the goal is still valid, it is just
+            planned on the old map.
+            """
+            client = self._clear_map_client
+            if client is None:
+                return
+            if not client.service_is_ready():
+                self.get_logger().warning(
+                    f"map clearing service {self.clear_map_service} is not available; "
+                    "the goal is planned on the map as it stands",
+                    throttle_duration_sec=30.0,
+                )
+                return
+            client.call_async(ClearEntireCostmap.Request())
+            self.get_logger().info(
+                f"naex map clearing requested ({self.clear_map_service})"
             )
 
         def _publish_annotated(self, image, found, header):
