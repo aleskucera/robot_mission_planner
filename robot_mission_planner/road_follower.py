@@ -193,6 +193,8 @@ class RoadFollower(Node):
         self.declare_parameter(
             "lookahead_sync_window", 15
         )  # waypoints searched for the closest
+        # Max waypoints a (post-initial) sync may advance the index in one tick.
+        self.declare_parameter("max_sync_jump", 2)
         self.declare_parameter(
             "road_goal_update_distance", 1.0
         )  # m: re-send active road goal
@@ -352,6 +354,7 @@ class RoadFollower(Node):
         self.intersection_route_max_offset = float(gp("intersection_route_max_offset"))
         self.gps_threshold = gp("gps_goal_threshold")
         self.lookahead_sync_window = gp("lookahead_sync_window")
+        self.max_sync_jump = gp("max_sync_jump")
         self.road_goal_update_distance = gp("road_goal_update_distance")
         self.gps_exit_require_passed = gp("gps_exit_require_passed")
         self.gps_exit_min_waypoints = gp("gps_exit_min_waypoints")
@@ -539,7 +542,9 @@ class RoadFollower(Node):
         self._intersections_on_route = None  # the subset of them on the planned route
         self._goal_active = False
         self._last_road_goal = None  # (x, y) in map_frame of the active ROAD goal
-        self._shift = None  # gps_shift: smoothed (dx, dy) route -> road centre, map_frame
+        self._shift = (
+            None  # gps_shift: smoothed (dx, dy) route -> road centre, map_frame
+        )
         self._pending_goal_timer = None
         self._gps_start_index = 0
         self.route.synced = False  # first sync searches the whole list
@@ -1209,7 +1214,8 @@ class RoadFollower(Node):
             return
         num_wps = len(self.waypoints)
         best_idx, min_dist = self.current_waypoint_index, float("inf")
-        if not self.route.synced:
+        initial_sync = not self.route.synced
+        if initial_sync:
             # Initial sync: the robot may start anywhere along the route.
             candidates = range(self.start_index, num_wps)
         else:
@@ -1227,7 +1233,11 @@ class RoadFollower(Node):
                 min_dist, best_idx = dist, idx
         if math.isfinite(min_dist):
             self.route.synced = True
-        if best_idx != self.current_waypoint_index:
+        # Candidates only lie ahead, so the forward step (mod num_wps for loops) is the jump.
+        if best_idx != self.current_waypoint_index and (
+            initial_sync
+            or (best_idx - self.current_waypoint_index) % num_wps <= self.max_sync_jump
+        ):
             # gps_goal_threshold > plan_spacing makes the index ping-pong between two
             # waypoints every tick: log only when it lands somewhere new.
             if best_idx != self._logged_sync_index:
@@ -1749,7 +1759,9 @@ class RoadFollower(Node):
             f"Goal reached ({d:.1f} m from the last waypoint): stopping."
         )
         self.state = self.STATE_ARRIVED
-        self._qr_detection_wanted = True  # the next code shown is the continue signal (R1)
+        self._qr_detection_wanted = (
+            True  # the next code shown is the continue signal (R1)
+        )
         self._arrived_time = self._now()
         self._cancel_plan_timer()
         self._cancel_pending_goal_timer()
@@ -2004,7 +2016,9 @@ class RoadFollower(Node):
         rob_xy = pose[:2]
         wps = self.waypoints_map
         placed = [
-            i for i in range(self.current_waypoint_index, len(wps)) if wps[i] is not None
+            i
+            for i in range(self.current_waypoint_index, len(wps))
+            if wps[i] is not None
         ]
         if not placed:
             return
@@ -2032,9 +2046,7 @@ class RoadFollower(Node):
             return
         direction = self.route.direction_at(max(idx - 1, 0))
         yaw = (
-            math.atan2(direction[1], direction[0])
-            if direction is not None
-            else pose[2]
+            math.atan2(direction[1], direction[0]) if direction is not None else pose[2]
         )
         self.get_logger().info(
             f"Shifted GPS goal: waypoint {idx} + ({dx:+.2f}, {dy:+.2f}) m = "
