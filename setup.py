@@ -59,6 +59,7 @@ setup(
             "road_follower_simple = robot_mission_planner.road_follower:main_road",
             "qr_goal = robot_mission_planner.qr_goal:main",
             "mission_hud = robot_mission_planner.mission_hud:main",
+            "fixposition_hud = robot_mission_planner.fixposition_hud:main",
             "mission_signal = robot_mission_planner.mission_signal:main",
             "qr_goal_send = robot_mission_planner.qr_goal_send:main",
         ],
