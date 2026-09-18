@@ -4,7 +4,7 @@
     image_topic: "/odin1/image/compressed"
     image_transport: "compressed" # compressed | raw
     process_rate: 2.0 # Hz: decode at most this often
-    decode_downscale: 2 # 1|2|4|8: decode frames smaller (less CPU, the code must look bigger)
+    decode_downscale: 1 # 1|2|4|8: decode frames smaller (less CPU, the code must look bigger)
     confirm_frames: 1 # consecutive frames before a goal (bag detections are rarely consecutive)
     # Cooldown before re-publishing same code (s)
     republish_after_s: 10.0
@@ -14,3 +14,6 @@
     detections_topic: "~/detections"
     publish_annotated: false # ~/image_annotated for rqt
     enabled: true # ~/enable (SetBool) toggles it
+    # naex (grid_planner) ClearEntireCostmap called with every goal so the new leg is not planned
+    # around obstacles left in the map from the previous one; "" = leave the map alone
+    clear_map_service: "/clear_distant_plan_map"
