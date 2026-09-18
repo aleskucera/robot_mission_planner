@@ -273,7 +273,8 @@ event in that first second is lost with it.
 ros2 launch robot_mission_planner mission_rviz.launch.py
 ```
 
-`rviz/robotour.rviz` + the `mission_hud` node (parameters in `config/mission_hud.yaml`): the
+`rviz/robotour.rviz` + the `mission_hud` node (parameters in `config/mission_hud.yaml`) and
+`fixposition_hud` (`config/fixposition_hud.yaml`): the
 Odin camera and the segmented path
 across the top, the mission scene below, and the numbers as overlays on the 3D view.
 Nothing in it commands the robot.
@@ -303,12 +304,30 @@ Nothing in it commands the robot.
   from the route path and tf, looked up at "latest" so a bag replay works unchanged.
   Bags recorded before `road_follower` published `~/route_path` fall back to
   `/route_planner/route_path`.
+* **Fixposition panel** — bottom right, from `fixposition_hud`, two lines answering the
+  one question FP_A-ODOMSTATUS (`/fixposition/fpa/odomstatus`) is for: can the pose be
+  trusted.
+
+  ```
+  FP global  fuse imu g1 g2 cor ws
+  g1 fix  g2 fix  cor ok  imu fine  ws ok
+  ```
+
+  The headline is the fusion initialisation (`global` is the good one, and the panel goes
+  red while the fusion is not initialised or the sensor goes silent) and the measurements
+  the fusion actually uses (a `!` marks a degraded one), plus `wait <reason>` while the
+  IMU bias or the wheelspeed is still converging. The second line is the detail: both GNSS
+  fixes, the RTK corrections, IMU bias and wheelspeed, each a short token coloured green /
+  amber / red. The rest of the message (cameras, markers, IMU noise, baseline) is left to
+  `ros2 topic echo`. A message older than `stale_timeout` (3 s) greys the detail line out
+  and the headline says `silent <n> s`.
 * **rviz Reset clears the OSM map for good.** Reset and a Fixed Frame change clear every
   display without subscribing again, and `osm_cloud` publishes `/osm_grid` and
   `/intersection_markers` once, latched. Untick and re-tick the *Map (osm_cloud)* group
   instead: that subscribes again and the latched copies arrive within a few seconds.
 
 Useful arguments: `rviz:=false` (HUD only, e.g. rviz runs on a laptop), `hud:=false`,
+`fp_hud:=false` (no fixposition panel),
 `description:=true` (publish the URDF here, for old bags), `robot_body:=true`
 (a placeholder box instead of the URDF), `text_size:=`, `config:=`.
 

@@ -28,8 +28,10 @@
   <exec_depend>crl_commander</exec_depend>
   <!-- map_data_interfaces provides the PlanRoute action road_follower uses for QR goals. -->
   <exec_depend>map_data_interfaces</exec_depend>
-  <!-- mission_hud publishes the rviz text panels; rviz2 + the overlay plugin draw them
-       (mission_rviz.launch.py). Only needed where the operator view runs. -->
+  <!-- fixposition_hud reads FP_A-ODOMSTATUS from the Vision-RTK driver. -->
+  <!--exec_depend>fixposition_driver_msgs</exec_depend-->
+  <!-- mission_hud and fixposition_hud publish the rviz text panels; rviz2 + the overlay
+       plugin draw them (mission_rviz.launch.py). Only needed where the operator view runs. -->
   <exec_depend>rviz_2d_overlay_msgs</exec_depend>
   <exec_depend>rviz_2d_overlay_plugins</exec_depend>
   <exec_depend>rviz2</exec_depend>

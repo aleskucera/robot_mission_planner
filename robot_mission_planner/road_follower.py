@@ -1773,6 +1773,11 @@ class RoadFollower(Node):
         self._cancel_current_goal()
         self._cancel_plan_goal()
         self._pending_goal = None  # an abort must not start the buffered leg either
+        # The leg is given up, so nothing is being followed any more: the empty route_path
+        # and the cleared markers take the abandoned route off rviz, the HUD and the viewer.
+        self.route.clear()
+        self._publish_route()
+        self._publish_waypoints_markers()
         self._event(f"ABORT:{left}")
         self._enter_idle("aborted by operator")
         response.success = True
