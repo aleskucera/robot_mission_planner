@@ -66,7 +66,7 @@ def parse_geo_uri(text: str | None) -> tuple[float, float] | None:
 
 
 def decode_qr(image) -> list[str]:
-    """Non-empty QR payloads found in a BGR/grey image (OpenCV QRCodeDetector)."""
+    """Non-empty QR payloads found in a BGR/grey image (OpenCV WeChatQRCode)."""
     return [text for text, _ in decode_qr_with_points(image)]
 
 
@@ -93,7 +93,7 @@ def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
         return []
     if not text:
         return []
-    return [(text[0], points[0][0] if points[0] is not None and len(points[0]) else None)]
+    return [(text[0], points[0] if len(points) else None)]
 
 
 class Debouncer:
