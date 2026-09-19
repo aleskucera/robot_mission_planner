@@ -53,7 +53,7 @@
     intersection_exit_threshold: 6.0 # m: from every intersection to switch back
     # Max distance (m) to planned route for an intersection to count (0 = all count)
     intersection_route_max_offset: 3.0
-    gps_goal_threshold: 5.0 # m: waypoint / road goal reached
+    gps_goal_threshold: 1.5 # m: waypoint / road goal reached
     lookahead_sync_window: 15 # waypoints searched for the closest one
     max_sync_jump: 2 # max waypoints the index may advance per sync tick (initial sync exempt)
     road_goal_update_distance: 1.0 # m: min shift of the road goal to re-send it
