@@ -70,7 +70,7 @@ def decode_qr(image) -> list[str]:
     return [text for text, _ in decode_qr_with_points(image)]
 
 
-_DETECTOR = cv2.QRCodeDetector() if cv2 is not None else None
+_DETECTOR = cv2.wechat_qrcode.WeChatQRCode() if cv2 is not None else None
 
 
 def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
@@ -83,12 +83,17 @@ def decode_qr_with_points(image) -> list[tuple[str, np.ndarray | None]]:
     if _DETECTOR is None or image is None or getattr(image, "size", 0) == 0:
         return []
     try:
-        text, points, _ = _DETECTOR.detectAndDecode(image)
-    except Exception:  # noqa: BLE001 - a bad frame must never kill the node
+        text, points = _DETECTOR.detectAndDecode(image)
+    except Exception as exc:  # noqa: BLE001 - a bad frame must never kill the node
+        from rclpy.logging import get_logger  # lazy: the parser is used without ROS
+
+        get_logger("qr_goal").warning(
+            f"QR decode failed: {exc!r}", throttle_duration_sec=5.0
+        )
         return []
     if not text:
         return []
-    return [(text, points[0] if points is not None and len(points) else None)]
+    return [(text[0], points[0][0] if points[0] is not None and len(points[0]) else None)]
 
 
 class Debouncer:
