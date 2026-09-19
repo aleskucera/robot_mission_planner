@@ -45,7 +45,6 @@ brought into it with TF. Intersections and road paths may arrive in any TF-conne
 and waypoints go through lat/lon -> ECEF (commander) or lat/lon -> UTM (nav2, ``use_utm``).
 """
 
-import contextlib
 import math
 import os
 import time
@@ -742,11 +741,15 @@ class RoadFollower(Node):
             )
             return []
         search = [os.path.join(os.path.dirname(__file__), "..", "data")]
-        with contextlib.suppress(Exception):  # not installed: the source tree is enough
+        try:
             search.append(
                 os.path.join(
                     get_package_share_directory("robot_mission_planner"), "data"
                 )
+            )
+        except Exception as exc:  # not installed: the source tree is enough
+            self.get_logger().warning(
+                f"package share not found ({exc!r}); route files from the source tree"
             )
         self.gps_path = resolve_file(self.gps_file_name, search)
         if not os.path.exists(self.gps_path):
@@ -2099,9 +2102,7 @@ class RoadFollower(Node):
     def save_waypoint_index(self):
         if not self.gps_path:
             return
-        with contextlib.suppress(
-            Exception
-        ):  # a missing index file is not worth a crash
+        try:  # a missing index file is not worth a crash
             index_dir = os.path.join(os.path.dirname(self.gps_path), "waypoint_index")
             os.makedirs(index_dir, exist_ok=True)
             path = os.path.join(index_dir, f"{int(time.time())}.txt")
@@ -2110,6 +2111,8 @@ class RoadFollower(Node):
             self.get_logger().info(
                 f"Saved current waypoint index {self.current_waypoint_index} to {path}"
             )
+        except Exception as exc:
+            self.get_logger().warning(f"Could not save the waypoint index: {exc!r}")
 
 
 def main(default_mode: str = "road_gps"):

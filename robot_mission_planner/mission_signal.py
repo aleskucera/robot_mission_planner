@@ -180,7 +180,10 @@ class MissionSignal(Node):
             return os.path.join(
                 get_package_share_directory("robot_mission_planner"), "data"
             )
-        except Exception:  # noqa: BLE001 - not built / not sourced: use the source tree
+        except Exception as exc:  # noqa: BLE001 - not built / not sourced: use the source tree
+            self.get_logger().warning(
+                f"package share not found ({exc!r}); sounds from the source tree"
+            )
             return os.path.join(os.path.dirname(__file__), "..", "data")
 
     def _warn_once(self, key: str, message: str) -> None:

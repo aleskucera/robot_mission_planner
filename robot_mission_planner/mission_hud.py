@@ -280,7 +280,11 @@ class MissionHud(Node):
             tr = self.tf_buffer.lookup_transform(
                 frame, self.robot_frame, Time()
             ).transform
-        except Exception:
+        except Exception as exc:
+            self.get_logger().warning(
+                f"TF {frame} <- {self.robot_frame} unavailable: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
             return None
         return tr.translation.x, tr.translation.y
 

@@ -194,7 +194,12 @@ def _decode_raw_image(msg):
         from cv_bridge import CvBridge
 
         return CvBridge().imgmsg_to_cv2(msg, desired_encoding="bgr8")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        from rclpy.logging import get_logger  # lazy: the parser is used without ROS
+
+        get_logger("qr_goal").warning(
+            f"cv_bridge cannot decode {enc!r}: {exc!r}", throttle_duration_sec=5.0
+        )
         return None
 
 
